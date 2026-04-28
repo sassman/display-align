@@ -1,0 +1,60 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+jobs:
+  build:
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build
+        run: swift build -c release
+
+      - name: Bundle .app
+        run: |
+          APP="DisplayAlign.app/Contents"
+          mkdir -p "$APP/MacOS" "$APP/Resources"
+
+          cp .build/release/DisplayAlign "$APP/MacOS/"
+
+          swift generate-icon.swift
+          iconutil -c icns /tmp/DisplayAlign.iconset -o "$APP/Resources/AppIcon.icns"
+
+          cat > "$APP/Info.plist" << 'EOF'
+          <?xml version="1.0" encoding="UTF-8"?>
+          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
+            "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+          <plist version="1.0">
+          <dict>
+              <key>CFBundleIdentifier</key>
+              <string>me.d34dl0ck.display-align</string>
+              <key>CFBundleName</key>
+              <string>DisplayAlign</string>
+              <key>CFBundleExecutable</key>
+              <string>DisplayAlign</string>
+              <key>CFBundleVersion</key>
+              <string>${{ github.ref_name }}</string>
+              <key>CFBundleShortVersionString</key>
+              <string>${{ github.ref_name }}</string>
+              <key>LSUIElement</key>
+              <true/>
+              <key>LSMinimumSystemVersion</key>
+              <string>14.0</string>
+              <key>CFBundleIconFile</key>
+              <string>AppIcon</string>
+          </dict>
+          </plist>
+          EOF
+
+      - name: Zip
+        run: zip -r DisplayAlign-${{ github.ref_name }}.zip DisplayAlign.app
+
+      - name: Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: DisplayAlign-${{ github.ref_name }}.zip
+          generate_release_notes: true
