@@ -5,6 +5,12 @@ A native macOS menubar app that automatically arranges external monitors when co
 ## Install
 
 ```sh
+brew install --cask sassman/tap/display-align
+```
+
+Or build from source:
+
+```sh
 ./bundle.sh
 # Installs to ~/Applications/DisplayAlign.app
 ```
