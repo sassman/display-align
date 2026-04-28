@@ -59,17 +59,7 @@ final class DisplayManager: ObservableObject {
         }
 
         // Fallback: vendor-based name
-        let vendorName: String
-        switch vendor {
-        case 4268:  vendorName = "Dell"
-        case 1552:  vendorName = "Apple"
-        case 220:   vendorName = "LG"
-        case 2513:  vendorName = "BenQ"
-        case 1267:  vendorName = "Samsung"
-        case 5765:  vendorName = "Lenovo"
-        default:    vendorName = "Vendor(\(vendor))"
-        }
-        return "\(vendorName) [model:\(model)]"
+        return "\(Vendor.name(for: vendor)) [model:\(model)]"
     }
 
     /// Check if any connected external is configured (stacked or flexible).
