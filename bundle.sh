@@ -29,7 +29,7 @@ cat > "${CONTENTS}/Info.plist" << 'EOF'
 <plist version="1.0">
 <dict>
     <key>CFBundleIdentifier</key>
-    <string>com.local.display-align</string>
+    <string>me.d34dl0ck.display-align</string>
     <key>CFBundleName</key>
     <string>DisplayAlign</string>
     <key>CFBundleExecutable</key>

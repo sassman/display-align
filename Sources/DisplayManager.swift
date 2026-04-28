@@ -2,6 +2,16 @@ import Foundation
 import CoreGraphics
 import AppKit
 
+/// Resolved rectangle for a display during layout computation.
+struct ResolvedDisplay {
+    let name: String
+    let displayID: CGDirectDisplayID
+    var x: Int
+    var y: Int
+    let width: Int
+    let height: Int
+}
+
 final class DisplayManager: ObservableObject {
     @Published var externalName: String?
     @Published var isAligned = false
@@ -16,7 +26,7 @@ final class DisplayManager: ObservableObject {
         startWatching()
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [weak self] in
             self?.refresh()
-            if let self = self, self.autoAlign, self.isStacked() {
+            if let self = self, self.autoAlign, self.hasConfiguredExternals() {
                 self.align()
             }
         }
@@ -37,15 +47,18 @@ final class DisplayManager: ObservableObject {
         let vendor = CGDisplayVendorNumber(displayID)
         let model  = CGDisplayModelNumber(displayID)
 
-        // Check config first
+        // Check all config lists
         if let entry = config.stacked.first(where: { $0.vendor == vendor && $0.model == model }) {
             return entry.name
         }
         if let entry = config.ignored.first(where: { $0.vendor == vendor && $0.model == model }) {
             return entry.name
         }
+        if let entry = config.flexible.first(where: { $0.vendor == vendor && $0.model == model }) {
+            return entry.name
+        }
 
-        // Fallback: describe by vendor
+        // Fallback: vendor-based name
         let vendorName: String
         switch vendor {
         case 4268:  vendorName = "Dell"
@@ -59,15 +72,15 @@ final class DisplayManager: ObservableObject {
         return "\(vendorName) [model:\(model)]"
     }
 
-    /// Check if the current external is in the stacked list.
-    func isStacked() -> Bool {
+    /// Check if any connected external is configured (stacked or flexible).
+    func hasConfiguredExternals() -> Bool {
         let displays = activeDisplays()
-        guard let externalID = displays.first(where: { CGDisplayIsBuiltin($0) == 0 }) else {
-            return false
+        return displays.contains { id in
+            guard CGDisplayIsBuiltin(id) == 0 else { return false }
+            let v = CGDisplayVendorNumber(id)
+            let m = CGDisplayModelNumber(id)
+            return config.isStacked(vendor: v, model: m) || config.isFlexible(vendor: v, model: m)
         }
-        let vendor = CGDisplayVendorNumber(externalID)
-        let model  = CGDisplayModelNumber(externalID)
-        return config.isStacked(vendor: vendor, model: model)
     }
 
     // MARK: - Refresh
@@ -82,56 +95,229 @@ final class DisplayManager: ObservableObject {
         }
 
         let externals = displays.filter { CGDisplayIsBuiltin($0) == 0 }
-        guard let externalID = externals.first else {
+        guard !externals.isEmpty else {
             externalName = nil
             isAligned = false
             statusMessage = "No external display"
             return
         }
 
-        let vendor = CGDisplayVendorNumber(externalID)
-        let model  = CGDisplayModelNumber(externalID)
-        let name = identifyDisplay(externalID)
-        externalName = name
+        // Show the first external's name (could show count if multiple)
+        let names = externals.map { identifyDisplay($0) }
+        externalName = names.joined(separator: ", ")
 
-        if config.isIgnored(vendor: vendor, model: model) {
-            isAligned = false
-            statusMessage = "Ignored"
-            return
+        // Check for unknown displays
+        for ext in externals {
+            let v = CGDisplayVendorNumber(ext)
+            let m = CGDisplayModelNumber(ext)
+            if !config.isKnown(vendor: v, model: m) {
+                isAligned = false
+                statusMessage = "Unknown display detected"
+                if !pendingPrompt {
+                    let name = identifyDisplay(ext)
+                    promptUser(name: name, vendor: v, model: m)
+                }
+                return
+            }
         }
 
-        if config.isStacked(vendor: vendor, model: model) {
-            checkAlignment()
-            return
-        }
-
-        // Unknown display — prompt user
-        isAligned = false
-        statusMessage = "Unknown display"
-        if !pendingPrompt {
-            promptUser(name: name, vendor: vendor, model: model)
-        }
+        // All known — check alignment
+        checkAlignment()
     }
 
     private func checkAlignment() {
+        guard let layout = computeLayout() else {
+            statusMessage = "Layout computation failed"
+            isAligned = false
+            return
+        }
+
+        // Compare computed layout against actual positions
+        var allAligned = true
+        for resolved in layout where CGDisplayIsBuiltin(resolved.displayID) == 0 {
+            let actual = CGDisplayBounds(resolved.displayID)
+            if Int(actual.origin.x) != resolved.x || Int(actual.origin.y) != resolved.y {
+                allAligned = false
+                break
+            }
+        }
+
+        isAligned = allAligned
+        statusMessage = allAligned ? "Aligned" : "Not aligned"
+    }
+
+    // MARK: - Layout Computation
+
+    /// Compute target positions for all displays based on config.
+    /// Returns nil if layout cannot be resolved (missing reference display, etc.)
+    private func computeLayout() -> [ResolvedDisplay]? {
         let displays = activeDisplays()
-        guard let builtinID = displays.first(where: { CGDisplayIsBuiltin($0) != 0 }),
-              let externalID = displays.first(where: { CGDisplayIsBuiltin($0) == 0 })
-        else { return }
+        guard let builtinID = displays.first(where: { CGDisplayIsBuiltin($0) != 0 }) else {
+            return nil
+        }
 
-        let builtinBounds  = CGDisplayBounds(builtinID)
-        let externalBounds = CGDisplayBounds(externalID)
+        let builtinBounds = CGDisplayBounds(builtinID)
+        var resolved: [ResolvedDisplay] = [
+            ResolvedDisplay(
+                name: "builtin",
+                displayID: builtinID,
+                x: 0, y: 0,
+                width: Int(builtinBounds.width),
+                height: Int(builtinBounds.height)
+            )
+        ]
 
-        let expectedX = Int(builtinBounds.width  - externalBounds.width) / 2
-        let expectedY = -Int(externalBounds.height)
+        // Resolve stacked displays: centered above builtin
+        for entry in config.stacked {
+            guard let id = displays.first(where: {
+                CGDisplayIsBuiltin($0) == 0
+                && CGDisplayVendorNumber($0) == entry.vendor
+                && CGDisplayModelNumber($0) == entry.model
+            }) else { continue }
 
-        let currentX = Int(externalBounds.origin.x)
-        let currentY = Int(externalBounds.origin.y)
+            let bounds = CGDisplayBounds(id)
+            let w = Int(bounds.width)
+            let h = Int(bounds.height)
+            let x = (Int(builtinBounds.width) - w) / 2
+            let y = -h
 
-        isAligned = currentX == expectedX && currentY == expectedY
-        statusMessage = isAligned
-            ? "Aligned at (\(currentX), \(currentY))"
-            : "Not aligned — at (\(currentX), \(currentY))"
+            resolved.append(ResolvedDisplay(name: entry.name, displayID: id, x: x, y: y, width: w, height: h))
+        }
+
+        // Resolve flexible displays in dependency order
+        var pending = config.flexible.filter { flex in
+            displays.contains(where: {
+                CGDisplayIsBuiltin($0) == 0
+                && CGDisplayVendorNumber($0) == flex.vendor
+                && CGDisplayModelNumber($0) == flex.model
+            })
+        }
+
+        var maxIterations = pending.count + 1
+        while !pending.isEmpty && maxIterations > 0 {
+            maxIterations -= 1
+            var nextPending: [FlexibleDisplay] = []
+
+            for flex in pending {
+                // Find the reference display in already-resolved list
+                let refName = flex.relative_to == "builtin" ? "builtin" : flex.relative_to
+                guard let ref = resolved.first(where: { $0.name == refName }) else {
+                    nextPending.append(flex)
+                    continue
+                }
+
+                guard let id = displays.first(where: {
+                    CGDisplayIsBuiltin($0) == 0
+                    && CGDisplayVendorNumber($0) == flex.vendor
+                    && CGDisplayModelNumber($0) == flex.model
+                }) else { continue }
+
+                let bounds = CGDisplayBounds(id)
+                let w = Int(bounds.width)
+                let h = Int(bounds.height)
+                let (x, y) = computeOrigin(flex: flex, ref: ref, width: w, height: h)
+
+                resolved.append(ResolvedDisplay(name: flex.name, displayID: id, x: x, y: y, width: w, height: h))
+            }
+
+            pending = nextPending
+        }
+
+        return resolved
+    }
+
+    /// Compute the (x, y) origin for a flexible display relative to a reference.
+    private func computeOrigin(flex: FlexibleDisplay, ref: ResolvedDisplay, width w: Int, height h: Int) -> (Int, Int) {
+        let offset = flex.effectiveOffset
+
+        switch flex.position {
+        case .left:
+            let x = ref.x - w
+            let y = alignY(flex.align, offset: offset, ref: ref, height: h)
+            return (x, y)
+
+        case .right:
+            let x = ref.x + ref.width
+            let y = alignY(flex.align, offset: offset, ref: ref, height: h)
+            return (x, y)
+
+        case .above:
+            let y = ref.y - h
+            let x = alignX(flex.align, offset: offset, ref: ref, width: w)
+            return (x, y)
+
+        case .below:
+            let y = ref.y + ref.height
+            let x = alignX(flex.align, offset: offset, ref: ref, width: w)
+            return (x, y)
+        }
+    }
+
+    /// Compute Y origin for left/right positioning.
+    private func alignY(_ align: FlexibleDisplay.Alignment, offset: Int, ref: ResolvedDisplay, height h: Int) -> Int {
+        switch align {
+        case .top:
+            return ref.y + offset
+        case .center:
+            return ref.y + (ref.height - h) / 2 + offset
+        case .bottom:
+            return ref.y + ref.height - h + offset
+        case .left_edge, .right_edge:
+            // Shouldn't be used for left/right, treat as top
+            return ref.y + offset
+        }
+    }
+
+    /// Compute X origin for above/below positioning.
+    private func alignX(_ align: FlexibleDisplay.Alignment, offset: Int, ref: ResolvedDisplay, width w: Int) -> Int {
+        switch align {
+        case .left_edge:
+            return ref.x + offset
+        case .center:
+            return ref.x + (ref.width - w) / 2 + offset
+        case .right_edge:
+            return ref.x + ref.width - w + offset
+        case .top, .bottom:
+            // Shouldn't be used for above/below, treat as left
+            return ref.x + offset
+        }
+    }
+
+    // MARK: - Align
+
+    func align() {
+        guard let layout = computeLayout() else {
+            statusMessage = "Cannot compute layout"
+            return
+        }
+
+        // Only move externals (not the builtin)
+        let moves = layout.filter { CGDisplayIsBuiltin($0.displayID) == 0 }
+        guard !moves.isEmpty else {
+            statusMessage = "No displays to move"
+            return
+        }
+
+        var cgConfig: CGDisplayConfigRef?
+        guard CGBeginDisplayConfiguration(&cgConfig) == .success else {
+            statusMessage = "Failed to begin display configuration"
+            return
+        }
+
+        for move in moves {
+            CGConfigureDisplayOrigin(cgConfig, move.displayID, Int32(move.x), Int32(move.y))
+        }
+
+        let result = CGCompleteDisplayConfiguration(cgConfig, .permanently)
+
+        if result == .success {
+            isAligned = true
+            let desc = moves.map { "\($0.name)→(\($0.x),\($0.y))" }.joined(separator: " ")
+            statusMessage = "Aligned: \(desc)"
+        } else {
+            isAligned = false
+            statusMessage = "Configuration failed (\(result.rawValue))"
+        }
     }
 
     // MARK: - Prompt for Unknown Display
@@ -166,50 +352,6 @@ final class DisplayManager: ObservableObject {
         }
     }
 
-    // MARK: - Align
-
-    func align() {
-        let displays = activeDisplays()
-        guard let builtinID = displays.first(where: { CGDisplayIsBuiltin($0) != 0 }),
-              let externalID = displays.first(where: { CGDisplayIsBuiltin($0) == 0 })
-        else {
-            statusMessage = "Need both displays connected"
-            return
-        }
-
-        let vendor = CGDisplayVendorNumber(externalID)
-        let model  = CGDisplayModelNumber(externalID)
-
-        guard config.isStacked(vendor: vendor, model: model) else {
-            statusMessage = "External is not in stacked list"
-            return
-        }
-
-        let builtinBounds  = CGDisplayBounds(builtinID)
-        let externalBounds = CGDisplayBounds(externalID)
-
-        let extX = Int32(Int(builtinBounds.width  - externalBounds.width) / 2)
-        let extY = Int32(-Int(externalBounds.height))
-
-        var config: CGDisplayConfigRef?
-        guard CGBeginDisplayConfiguration(&config) == .success else {
-            statusMessage = "Failed to begin display configuration"
-            return
-        }
-
-        CGConfigureDisplayOrigin(config, externalID, extX, extY)
-
-        let result = CGCompleteDisplayConfiguration(config, .permanently)
-
-        if result == .success {
-            isAligned = true
-            statusMessage = "Aligned at (\(extX), \(extY))"
-        } else {
-            isAligned = false
-            statusMessage = "Configuration failed (\(result.rawValue))"
-        }
-    }
-
     // MARK: - Display Change Callback
 
     private func startWatching() {
@@ -232,7 +374,7 @@ private func displayReconfigured(
 
     DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
         manager.refresh()
-        if flags.contains(.addFlag), manager.autoAlign, manager.isStacked() {
+        if flags.contains(.addFlag), manager.autoAlign, manager.hasConfiguredExternals() {
             manager.align()
         }
     }
