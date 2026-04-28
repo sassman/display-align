@@ -58,8 +58,8 @@ final class DisplayManager: ObservableObject {
             return entry.name
         }
 
-        // Fallback: vendor-based name
-        return "\(Vendor.name(for: vendor)) [model:\(model)]"
+        // Fallback: "<Vendor> <NSScreen.localizedName>", e.g. "AOC U2790B".
+        return Vendor.humanLabel(for: displayID)
     }
 
     /// Check if any connected external is configured (stacked or flexible).

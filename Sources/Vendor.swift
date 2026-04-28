@@ -1,4 +1,6 @@
 import Foundation
+import AppKit
+import CoreGraphics
 
 /// Resolve a `CGDisplayVendorNumber` to a human-readable manufacturer name.
 ///
@@ -78,5 +80,37 @@ enum Vendor {
             return name
         }
         return "Vendor(\(vendor))"
+    }
+
+    /// Build a human-readable display label of the form `"<Vendor> <Model>"`,
+    /// e.g. `"AOC U2790B"` or `"ASUS ROG PG348Q"`. The model part comes from
+    /// `NSScreen.localizedName` (same string macOS shows in System Settings →
+    /// Displays). Falls back to `"<Vendor> [model:<n>]"` when no `NSScreen`
+    /// matches — primarily virtual or capture-card displays.
+    static func humanLabel(for displayID: CGDirectDisplayID) -> String {
+        let vendor = name(for: CGDisplayVendorNumber(displayID))
+        let screen = NSScreen.screens.first {
+            ($0.deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? NSNumber)?.uint32Value == displayID
+        }
+        if let model = screen?.localizedName, !model.isEmpty {
+            return "\(vendor) \(model)"
+        }
+        return "\(vendor) [model:\(CGDisplayModelNumber(displayID))]"
+    }
+
+    /// Best-effort human label when only `(vendor, model)` is known and no
+    /// `CGDirectDisplayID` is on hand (e.g. during config migration). Walks
+    /// connected screens for a fingerprint match and delegates to
+    /// `humanLabel(for:)`. Returns `nil` if no connected display matches.
+    static func humanLabel(forVendor vendor: UInt32, model: UInt32) -> String? {
+        for screen in NSScreen.screens {
+            guard
+                let id = (screen.deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? NSNumber)?.uint32Value,
+                CGDisplayVendorNumber(id) == vendor,
+                CGDisplayModelNumber(id) == model
+            else { continue }
+            return humanLabel(for: id)
+        }
+        return nil
     }
 }
