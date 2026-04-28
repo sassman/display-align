@@ -78,6 +78,8 @@ jobs:
           APPLE_APP_PASSWORD: ${{ secrets.APPLE_APP_PASSWORD }}
         run: |
           source "$HOME/.cargo/env"
+          echo "Available signing identities:"
+          security find-identity -v -p codesigning
           cargo codesign macos --app DisplayAlign.app
 
           DMG="DisplayAlign-${{ github.ref_name }}.dmg"
