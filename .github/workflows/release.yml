@@ -59,6 +59,10 @@ jobs:
               <string>DisplayAlign</string>
               <key>CFBundleExecutable</key>
               <string>DisplayAlign</string>
+              <key>CFBundlePackageType</key>
+              <string>APPL</string>
+              <key>NSPrincipalClass</key>
+              <string>NSApplication</string>
               <key>CFBundleVersion</key>
               <string>${VERSION}</string>
               <key>CFBundleShortVersionString</key>
