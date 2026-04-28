@@ -1,0 +1,24 @@
+# Swift / Xcode
+.build/
+.swiftpm/
+*.xcodeproj/
+*.xcworkspace/
+xcuserdata/
+DerivedData/
+*.dSYM/
+*.moved-aside
+*.hmap
+*.ipa
+*.xcuserstate
+
+# macOS
+.DS_Store
+._*
+.Spotlight-V100
+.Trashes
+
+# App bundles (built artifact)
+*.app/
+
+# Icon generation temp
+/tmp/
