@@ -56,6 +56,9 @@ jobs:
           </plist>
           EOF
 
+          # Ad-hoc sign to prevent "damaged" Gatekeeper error on Apple Silicon
+          codesign --force --deep --sign - DisplayAlign.app
+
       - name: Zip
         id: zip
         run: |
