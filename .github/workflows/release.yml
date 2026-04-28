@@ -81,11 +81,21 @@ jobs:
 
       - name: Import certificate
         env:
-          MACOS_CERTIFICATE: ${{ secrets.MACOS_CERTIFICATE_BASE64 }}
+          MACOS_CERTIFICATE_BASE64: ${{ secrets.MACOS_CERTIFICATE_BASE64 }}
           MACOS_CERTIFICATE_PASSWORD: ${{ secrets.MACOS_CERTIFICATE_PASSWORD }}
         run: |
           source "$HOME/.cargo/env"
           cargo codesign macos --ci-import-cert
+
+      - name: Add ephemeral keychain to search list
+        # Workaround for cargo-codesign 0.2.x: --ci-import-cert creates the
+        # keychain but does not add it to the user search list, so codesign
+        # cannot find the identity. Drop once upstream ships the fix.
+        run: |
+          KC=$(cat target/.codesign-keychain)
+          # shellcheck disable=SC2046  # word splitting is intentional here
+          security list-keychains -d user -s "$KC" $(security list-keychains -d user | tr -d ' "')
+          security find-identity -v -p codesigning
 
       - name: Sign, notarize, and package
         id: sign
