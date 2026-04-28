@@ -8,6 +8,8 @@ on:
 jobs:
   build:
     runs-on: macos-14
+    outputs:
+      sha256: ${{ steps.zip.outputs.sha256 }}
     steps:
       - uses: actions/checkout@v4
 
@@ -24,7 +26,8 @@ jobs:
           swift generate-icon.swift
           iconutil -c icns /tmp/DisplayAlign.iconset -o "$APP/Resources/AppIcon.icns"
 
-          cat > "$APP/Info.plist" << 'EOF'
+          VERSION="${GITHUB_REF_NAME#v}"
+          cat > "$APP/Info.plist" << EOF
           <?xml version="1.0" encoding="UTF-8"?>
           <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
             "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -37,9 +40,9 @@ jobs:
               <key>CFBundleExecutable</key>
               <string>DisplayAlign</string>
               <key>CFBundleVersion</key>
-              <string>${{ github.ref_name }}</string>
+              <string>${VERSION}</string>
               <key>CFBundleShortVersionString</key>
-              <string>${{ github.ref_name }}</string>
+              <string>${VERSION}</string>
               <key>LSUIElement</key>
               <true/>
               <key>LSMinimumSystemVersion</key>
@@ -51,10 +54,72 @@ jobs:
           EOF
 
       - name: Zip
-        run: zip -r DisplayAlign-${{ github.ref_name }}.zip DisplayAlign.app
+        id: zip
+        run: |
+          zip -r DisplayAlign-${{ github.ref_name }}.zip DisplayAlign.app
+          SHA=$(shasum -a 256 DisplayAlign-${{ github.ref_name }}.zip | awk '{print $1}')
+          echo "sha256=${SHA}" >> "$GITHUB_OUTPUT"
 
       - name: Release
         uses: softprops/action-gh-release@v2
         with:
           files: DisplayAlign-${{ github.ref_name }}.zip
           generate_release_notes: true
+
+  publish-homebrew-cask:
+    needs: build
+    runs-on: ubuntu-latest
+    env:
+      GITHUB_USER: "5422m4n-bot[bot]"
+      GITHUB_EMAIL: "1178949+5422m4n-bot[bot]@users.noreply.github.com"
+    steps:
+      - name: Generate bot token
+        uses: actions/create-github-app-token@v3
+        id: app-token
+        with:
+          app-id: ${{ secrets.BOT_APP_ID }}
+          private-key: ${{ secrets.BOT_PRIVATE_KEY }}
+          owner: sassman
+          repositories: homebrew-tap
+
+      - name: Checkout homebrew-tap
+        uses: actions/checkout@v4
+        with:
+          repository: sassman/homebrew-tap
+          token: ${{ steps.app-token.outputs.token }}
+
+      - name: Update cask formula
+        env:
+          VERSION: ${{ github.ref_name }}
+          SHA256: ${{ needs.build.outputs.sha256 }}
+        run: |
+          VERSION_NUM="${VERSION#v}"
+          mkdir -p Casks
+
+          cat > Casks/display-align.rb << EOF
+          cask "display-align" do
+            version "${VERSION_NUM}"
+            sha256 "${SHA256}"
+
+            url "https://github.com/sassman/display-align/releases/download/v#{version}/DisplayAlign-v#{version}.zip"
+            name "DisplayAlign"
+            desc "Automatic display arrangement for macOS"
+            homepage "https://github.com/sassman/display-align"
+
+            depends_on macos: ">= :sonoma"
+
+            app "DisplayAlign.app"
+
+            zap trash: [
+              "~/.config/display-align",
+            ]
+          end
+          EOF
+
+      - name: Commit and push
+        run: |
+          git config user.name "$GITHUB_USER"
+          git config user.email "$GITHUB_EMAIL"
+          git add Casks/display-align.rb
+          git commit -m "chore(cask): update display-align to ${GITHUB_REF_NAME}"
+          git push
