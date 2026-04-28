@@ -4,6 +4,12 @@ on:
   push:
     tags:
       - "v*"
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Version for test build (no release, no brew bump)"
+        default: "0.0.0-dev"
+        required: false
 
 permissions:
   contents: write
@@ -13,8 +19,19 @@ jobs:
     runs-on: macos-14
     outputs:
       sha256: ${{ steps.sign.outputs.sha256 }}
+      version: ${{ steps.ver.outputs.version }}
     steps:
       - uses: actions/checkout@v6
+
+      - name: Resolve version
+        id: ver
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            VERSION="${{ inputs.version }}"
+          else
+            VERSION="${GITHUB_REF_NAME#v}"
+          fi
+          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
 
       - name: Build
         run: swift build -c release
@@ -29,7 +46,7 @@ jobs:
           swift generate-icon.swift
           iconutil -c icns /tmp/DisplayAlign.iconset -o "$APP/Resources/AppIcon.icns"
 
-          VERSION="${GITHUB_REF_NAME#v}"
+          VERSION="${{ steps.ver.outputs.version }}"
           cat > "$APP/Info.plist" << EOF
           <?xml version="1.0" encoding="UTF-8"?>
           <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
@@ -64,7 +81,7 @@ jobs:
 
       - name: Import certificate
         env:
-          MACOS_CERTIFICATE_BASE64: ${{ secrets.MACOS_CERTIFICATE_BASE64 }}
+          MACOS_CERTIFICATE: ${{ secrets.MACOS_CERTIFICATE_BASE64 }}
           MACOS_CERTIFICATE_PASSWORD: ${{ secrets.MACOS_CERTIFICATE_PASSWORD }}
         run: |
           source "$HOME/.cargo/env"
@@ -78,14 +95,18 @@ jobs:
           APPLE_APP_PASSWORD: ${{ secrets.APPLE_APP_PASSWORD }}
         run: |
           source "$HOME/.cargo/env"
-          echo "Available signing identities:"
-          security find-identity -v -p codesigning
           cargo codesign macos --app DisplayAlign.app
 
-          DMG="DisplayAlign-${{ github.ref_name }}.dmg"
+          DMG="DisplayAlign-v${{ steps.ver.outputs.version }}.dmg"
           mv DisplayAlign.dmg "$DMG"
           SHA=$(shasum -a 256 "$DMG" | awk '{print $1}')
+          echo "dmg=${DMG}" >> "$GITHUB_OUTPUT"
           echo "sha256=${SHA}" >> "$GITHUB_OUTPUT"
+
+      - name: Verify signed DMG
+        run: |
+          source "$HOME/.cargo/env"
+          cargo codesign verify "${{ steps.sign.outputs.dmg }}" --method macos
 
       - name: Cleanup certificate
         if: always()
@@ -93,14 +114,23 @@ jobs:
           source "$HOME/.cargo/env"
           cargo codesign macos --ci-cleanup-cert
 
+      - name: Upload DMG artifact (workflow_dispatch)
+        if: github.event_name == 'workflow_dispatch'
+        uses: actions/upload-artifact@v4
+        with:
+          name: DisplayAlign-dmg
+          path: ${{ steps.sign.outputs.dmg }}
+
       - name: Release
+        if: startsWith(github.ref, 'refs/tags/v')
         uses: softprops/action-gh-release@v3
         with:
-          files: DisplayAlign-${{ github.ref_name }}.dmg
+          files: ${{ steps.sign.outputs.dmg }}
           generate_release_notes: true
 
   publish-homebrew-cask:
     needs: build
+    if: startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
     env:
       GITHUB_USER: "5422m4n-bot[bot]"
