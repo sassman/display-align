@@ -1,0 +1,10 @@
+[macos]
+identity = "Developer ID Application"
+auth = "apple-id"
+
+[macos.env]
+certificate = "MACOS_CERTIFICATE_BASE64"
+certificate-password = "MACOS_CERTIFICATE_PASSWORD"
+apple-id = "APPLE_ID"
+team-id = "APPLE_TEAM_ID"
+app-password = "APPLE_APP_PASSWORD"

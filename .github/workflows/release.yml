@@ -12,9 +12,9 @@ jobs:
   build:
     runs-on: macos-14
     outputs:
-      sha256: ${{ steps.zip.outputs.sha256 }}
+      sha256: ${{ steps.sign.outputs.sha256 }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - name: Build
         run: swift build -c release
@@ -56,20 +56,45 @@ jobs:
           </plist>
           EOF
 
-          # Ad-hoc sign to prevent "damaged" Gatekeeper error on Apple Silicon
-          codesign --force --deep --sign - DisplayAlign.app
-
-      - name: Zip
-        id: zip
+      - name: Install cargo-codesign
         run: |
-          zip -r DisplayAlign-${{ github.ref_name }}.zip DisplayAlign.app
-          SHA=$(shasum -a 256 DisplayAlign-${{ github.ref_name }}.zip | awk '{print $1}')
+          curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
+          source "$HOME/.cargo/env"
+          cargo install cargo-codesign
+
+      - name: Import certificate
+        env:
+          MACOS_CERTIFICATE_BASE64: ${{ secrets.MACOS_CERTIFICATE_BASE64 }}
+          MACOS_CERTIFICATE_PASSWORD: ${{ secrets.MACOS_CERTIFICATE_PASSWORD }}
+        run: |
+          source "$HOME/.cargo/env"
+          cargo codesign macos --ci-import-cert
+
+      - name: Sign, notarize, and package
+        id: sign
+        env:
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          APPLE_APP_PASSWORD: ${{ secrets.APPLE_APP_PASSWORD }}
+        run: |
+          source "$HOME/.cargo/env"
+          cargo codesign macos --app DisplayAlign.app
+
+          DMG="DisplayAlign-${{ github.ref_name }}.dmg"
+          mv DisplayAlign.dmg "$DMG"
+          SHA=$(shasum -a 256 "$DMG" | awk '{print $1}')
           echo "sha256=${SHA}" >> "$GITHUB_OUTPUT"
 
+      - name: Cleanup certificate
+        if: always()
+        run: |
+          source "$HOME/.cargo/env"
+          cargo codesign macos --ci-cleanup-cert
+
       - name: Release
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@v3
         with:
-          files: DisplayAlign-${{ github.ref_name }}.zip
+          files: DisplayAlign-${{ github.ref_name }}.dmg
           generate_release_notes: true
 
   publish-homebrew-cask:
@@ -83,13 +108,13 @@ jobs:
         uses: actions/create-github-app-token@v3
         id: app-token
         with:
-          app-id: ${{ secrets.BOT_APP_ID }}
+          client-id: ${{ secrets.BOT_APP_ID }}
           private-key: ${{ secrets.BOT_PRIVATE_KEY }}
           owner: sassman
           repositories: homebrew-tap
 
       - name: Checkout homebrew-tap
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
         with:
           repository: sassman/homebrew-tap
           token: ${{ steps.app-token.outputs.token }}
@@ -107,7 +132,7 @@ jobs:
             version "${VERSION_NUM}"
             sha256 "${SHA256}"
 
-            url "https://github.com/sassman/display-align/releases/download/v#{version}/DisplayAlign-v#{version}.zip"
+            url "https://github.com/sassman/display-align/releases/download/v#{version}/DisplayAlign-v#{version}.dmg"
             name "DisplayAlign"
             desc "Automatic display arrangement for macOS"
             homepage "https://github.com/sassman/display-align"
