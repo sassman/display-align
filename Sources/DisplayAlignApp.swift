@@ -30,6 +30,26 @@ struct DisplayAlignApp: App {
 
             Divider()
 
+            if manager.arrangementNames.count > 1 {
+                Menu("Active Arrangement: \(manager.activeArrangement)") {
+                    ForEach(manager.arrangementNames, id: \.self) { name in
+                        Button {
+                            manager.switchArrangement(name)
+                        } label: {
+                            if name == manager.activeArrangement {
+                                Label(name, systemImage: "checkmark")
+                            } else {
+                                Text(name)
+                            }
+                        }
+                    }
+                }
+            } else {
+                Text("Active Arrangement: \(manager.activeArrangement)")
+            }
+
+            Divider()
+
             Button("Open Config...") {
                 NSWorkspace.shared.selectFile(
                     Config.configFile.path,

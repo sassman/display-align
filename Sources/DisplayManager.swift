@@ -18,17 +18,41 @@ final class DisplayManager: ObservableObject {
     @Published var autoAlign = true
     @Published var statusMessage = "Starting..."
 
+    /// Mirrors `config.arrangements.map(\.name)`. Republished after switches
+    /// so the menu picker stays in sync.
+    @Published private(set) var arrangementNames: [String] = []
+    /// Mirrors `config.active`. Driven by `switchArrangement(_:)`.
+    @Published private(set) var activeArrangement: String = ""
+
     private var config: Config
     private var pendingPrompt = false
 
     init() {
         config = Config.load()
+        publishArrangementState()
         startWatching()
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [weak self] in
             self?.refresh()
             if let self = self, self.autoAlign, self.hasConfiguredExternals() {
                 self.align()
             }
+        }
+    }
+
+    private func publishArrangementState() {
+        arrangementNames = config.arrangements.map(\.name)
+        activeArrangement = config.active
+    }
+
+    /// Switch the active arrangement and re-evaluate connected displays.
+    /// If `autoAlign` is on and the new arrangement covers any connected
+    /// external, immediately re-align so the windows actually move.
+    func switchArrangement(_ name: String) {
+        guard config.switchTo(name) else { return }
+        publishArrangementState()
+        refresh()
+        if autoAlign, hasConfiguredExternals() {
+            align()
         }
     }
 
@@ -48,13 +72,13 @@ final class DisplayManager: ObservableObject {
         let model  = CGDisplayModelNumber(displayID)
 
         // Check all config lists
-        if let entry = config.stacked.first(where: { $0.vendor == vendor && $0.model == model }) {
+        if let entry = config.current.stacked.first(where: { $0.vendor == vendor && $0.model == model }) {
             return entry.name
         }
         if let entry = config.ignored.first(where: { $0.vendor == vendor && $0.model == model }) {
             return entry.name
         }
-        if let entry = config.flexible.first(where: { $0.vendor == vendor && $0.model == model }) {
+        if let entry = config.current.flexible.first(where: { $0.vendor == vendor && $0.model == model }) {
             return entry.name
         }
 
@@ -158,7 +182,7 @@ final class DisplayManager: ObservableObject {
         ]
 
         // Resolve stacked displays: centered above builtin
-        for entry in config.stacked {
+        for entry in config.current.stacked {
             guard let id = displays.first(where: {
                 CGDisplayIsBuiltin($0) == 0
                 && CGDisplayVendorNumber($0) == entry.vendor
@@ -175,7 +199,7 @@ final class DisplayManager: ObservableObject {
         }
 
         // Resolve flexible displays in dependency order
-        var pending = config.flexible.filter { flex in
+        var pending = config.current.flexible.filter { flex in
             displays.contains(where: {
                 CGDisplayIsBuiltin($0) == 0
                 && CGDisplayVendorNumber($0) == flex.vendor
@@ -316,29 +340,71 @@ final class DisplayManager: ObservableObject {
         pendingPrompt = true
 
         DispatchQueue.main.async { [weak self] in
+            guard let self else { return }
             NSApp.activate(ignoringOtherApps: true)
 
+            // If another arrangement already knows this display, offer to
+            // switch to it as the default action. Saves the user from
+            // creating a duplicate arrangement when they're just moving
+            // between desks they've already configured.
+            let knownArrangement = self.config.arrangementContaining(vendor: vendor, model: model)
+
             let alert = NSAlert()
-            alert.messageText = "Unknown Display Detected"
-            alert.informativeText = "\"\(name)\" (vendor:\(vendor), model:\(model)) is not in your config.\n\nShould it be stacked (centered above the built-in display)?"
+            if let arrName = knownArrangement {
+                alert.messageText = "Already-Known Display Detected"
+                alert.informativeText = """
+                "\(name)" (vendor:\(vendor), model:\(model)) is already in the "\(arrName)" arrangement, but the active one is "\(self.activeArrangement)".
+
+                Activate "\(arrName)", stack the display in the current arrangement, or ignore it?
+                """
+            } else {
+                alert.messageText = "Unknown Display Detected"
+                alert.informativeText = """
+                "\(name)" (vendor:\(vendor), model:\(model)) is not in any arrangement.
+
+                Stack it above the built-in display, or ignore it?
+                """
+            }
             alert.alertStyle = .informational
+
+            // Buttons render right-to-left in addButton order; the first
+            // becomes the default. When an existing arrangement matches,
+            // "Activate <name>" is the most likely intent → first slot.
+            if let arrName = knownArrangement {
+                alert.addButton(withTitle: "Activate \"\(arrName)\"")
+            }
             alert.addButton(withTitle: "Stack Above")
             alert.addButton(withTitle: "Ignore")
 
             let response = alert.runModal()
             let entry = DisplayEntry(name: name, vendor: vendor, model: model)
 
-            if response == .alertFirstButtonReturn {
-                self?.config.addStacked(entry)
-                self?.refresh()
-                if self?.autoAlign == true {
-                    self?.align()
+            // Map the response onto the available actions. Indices shift
+            // depending on whether the activate option was added.
+            let activateResponse: NSApplication.ModalResponse? = knownArrangement == nil
+                ? nil : .alertFirstButtonReturn
+            let stackResponse: NSApplication.ModalResponse = knownArrangement == nil
+                ? .alertFirstButtonReturn : .alertSecondButtonReturn
+
+            switch response {
+            case activateResponse:
+                if let arrName = knownArrangement {
+                    self.switchArrangement(arrName)
                 }
-            } else {
-                self?.config.addIgnored(entry)
-                self?.refresh()
+            case stackResponse:
+                let switched = self.config.recordStackedFromPrompt(entry)
+                if switched {
+                    self.publishArrangementState()
+                }
+                self.refresh()
+                if self.autoAlign {
+                    self.align()
+                }
+            default:
+                self.config.addIgnored(entry)
+                self.refresh()
             }
-            self?.pendingPrompt = false
+            self.pendingPrompt = false
         }
     }
 

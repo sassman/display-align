@@ -2,7 +2,7 @@
 
 ![DisplayAlign — about window and menu bar dropdown showing aligned ASUS ROG PG348Q and AOC U2790B displays](assets/banner.png)
 
-A native macOS menubar app that automatically arranges external monitors when connected. No external dependencies — uses CoreGraphics directly.
+A native macOS menubar app that automatically arranges external monitors when connected. No external dependencies, just CoreGraphics.
 
 ## Install
 
@@ -23,21 +23,71 @@ Add to Login Items (System Settings → General → Login Items) for auto-start.
 
 `~/.config/display-align/config.json`
 
-On first run, the config is seeded with a single stacked display. Edit the file to change behavior — the app reads it on startup and when displays change.
+On first run, the config is seeded with a `default` arrangement and one stacked display. The app reads the file on startup and whenever displays change; edit it to change behavior.
+
+```json
+{
+  "active": "default",
+  "ignored": [],
+  "arrangements": [
+    {
+      "name": "default",
+      "stacked": [
+        { "name": "DELL P3424WEB", "vendor": 4268, "model": 17092 }
+      ],
+      "flexible": []
+    }
+  ]
+}
+```
+
+| Field | Scope | Meaning |
+|-------|-------|---------|
+| `active` | top-level | The arrangement currently in effect. The menubar's **Active Arrangement** submenu switches it; the value is persisted across launches. |
+| `ignored` | top-level (global) | Displays the app will never move or prompt about. Global because "leave this dongle alone" doesn't change between desks. |
+| `arrangements` | top-level | List of named layouts. Always non-empty; falls back to `default` if `active` doesn't resolve. |
+| `arrangements[].name` | per-arrangement | Speaking name shown in the menu (e.g. `"office"`, `"home"`, `"travel"`). |
+| `arrangements[].stacked` | per-arrangement | Displays centered above the built-in screen. |
+| `arrangements[].flexible` | per-arrangement | Displays positioned relative to another (see below). |
+
+### Arrangements (multiple desks / setups)
+
+Each arrangement is an independent layout. Switch from the menubar in one click. Handy when the same monitors sit in different positions at different desks. The active arrangement is saved in `active`, so the app starts in whatever setup you left it.
+
+```json
+{
+  "active": "office",
+  "ignored": [],
+  "arrangements": [
+    {
+      "name": "default",
+      "stacked": [
+        { "name": "DELL P3424WEB", "vendor": 4268, "model": 17092 }
+      ],
+      "flexible": []
+    },
+    {
+      "name": "office",
+      "stacked": [
+        { "name": "ASUS ROG PG348Q", "vendor": 1129, "model": 13363 }
+      ],
+      "flexible": [
+        {
+          "name": "AOC U2790B", "vendor": 1507, "model": 10128,
+          "position": "left", "relative_to": "ASUS ROG PG348Q",
+          "align": "top", "offset": -925, "rotation": 90
+        }
+      ]
+    }
+  ]
+}
+```
+
+When more than one arrangement is defined, the menubar shows an **Active Arrangement: \<name\> ▸** submenu. Pick another and the layout re-evaluates (and re-aligns, if *Auto-align on connect* is on).
 
 ### Stacked (simple)
 
 Displays in `stacked` are centered above the built-in MacBook screen. No further configuration needed.
-
-```json
-{
-  "stacked": [
-    { "name": "DELL P3424WEB", "vendor": 4268, "model": 17092 }
-  ],
-  "ignored": [],
-  "flexible": []
-}
-```
 
 ```
        ┌──────────────────┐
@@ -55,19 +105,19 @@ Displays in `flexible` are placed relative to another display with pixel-precise
 | Field | Values | Meaning |
 |-------|--------|---------|
 | `position` | `above`, `below`, `left`, `right` | Which side of the reference display |
-| `relative_to` | `"builtin"` or a display name | The anchor display |
+| `relative_to` | `"builtin"` or a display name | The anchor display (must exist in the same arrangement, or be `"builtin"`) |
 | `align` | `top`, `center`, `bottom` | Which edge of `relative_to` to align against |
 | `offset` | integer (pixels) | Shift from the `align` anchor. Positive = down (for left/right) or right (for above/below) |
 | `rotation` | `0`, `90`, `270` | Informational (set rotation via System Settings) |
 
-### Example: portrait monitor left of a stacked ultrawide
+#### Example: portrait monitor left of a stacked ultrawide
 
 ```json
 {
+  "name": "default",
   "stacked": [
     { "name": "DELL P3424WEB", "vendor": 4268, "model": 17092 }
   ],
-  "ignored": [],
   "flexible": [
     {
       "name": "LG 27UP850", "vendor": 220, "model": 5531,
@@ -81,7 +131,7 @@ Displays in `flexible` are placed relative to another display with pixel-precise
 }
 ```
 
-The LG is positioned to the left of the Dell, with its top edge 120px below the Dell's top edge:
+The LG sits to the left of the Dell with its top edge 120px below the Dell's top:
 
 ```
         DELL P3424WEB (relative_to)
@@ -97,24 +147,35 @@ The LG is positioned to the left of the Dell, with its top edge 120px below the 
              └────────┘
 ```
 
-This ensures the mouse travels in a straight horizontal line from the Dell's right portion into the LG at the same Y coordinate. Tune `offset` until the crossing feels right.
+The mouse crosses horizontally between the Dell and the LG without jumping vertically. Tune `offset` until the crossing feels right.
 
-### Ignored
+### Ignored (global)
 
-Displays in `ignored` are left alone — the app won't move them or prompt about them.
+Displays in `ignored` are left alone in every arrangement. The app won't move them or prompt about them. Good fit for hardware that shouldn't participate at all: a capture dongle, a media-playback TV.
+
+### Migration from older configs
+
+Configs that predate the `active` / `arrangements` schema (top-level `stacked` / `flexible`) get wrapped into a single `default` arrangement on first launch. `ignored` stays at the top level. The migration runs once and rewrites the file in place; no manual editing required.
 
 ## Unknown displays
 
-When a display is connected that isn't in any list, the app shows a prompt:
+When a display connects that isn't in the active arrangement, you get a prompt. Buttons:
 
-- **Stack Above** → adds to `stacked`
-- **Ignore** → adds to `ignored`
+| Button | Effect |
+|---|---|
+| **Activate "&lt;name&gt;"** | Only shown if another arrangement already knows the display (first match in config order wins). Switches `active` to that arrangement. |
+| **Stack Above** | Adds the display to `stacked`. Mutates the active arrangement if it's empty; otherwise clones it (auto-named `<current> 2`, `<current> 3`, …) so an existing layout isn't overwritten. |
+| **Ignore** | Adds to the global `ignored` list. |
 
-To change a decision or move a display to `flexible`, edit the config file directly. The menubar menu has an "Open Config..." item for quick access.
+<p align="center">
+  <img src="assets/prompt-known.png" alt="Already-Known Display Detected prompt with Activate / Stack Above / Ignore buttons" width="320">
+</p>
+
+Edit `~/.config/display-align/config.json` directly to rename arrangements or move displays to `flexible`. The "Open Config..." menu item reveals the file in Finder.
 
 ## Finding vendor/model IDs
 
-Connect the display and check the prompt — it shows the vendor and model numbers. Or run:
+Connect the display and check the prompt; it shows the vendor and model numbers. Or run:
 
 ```sh
 cat <<'EOF' | swift -
