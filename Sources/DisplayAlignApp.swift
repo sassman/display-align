@@ -46,8 +46,7 @@ struct DisplayAlignApp: App {
             Text("DisplayAlign v\(appVersion)")
 
             Button("About DisplayAlign…") {
-                NSApp.orderFrontStandardAboutPanel(nil)
-                NSApp.activate(ignoringOtherApps: true)
+                AboutWindow.show()
             }
 
             Button("GitHub: sassman/display-align") {
