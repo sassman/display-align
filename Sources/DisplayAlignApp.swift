@@ -37,6 +37,25 @@ struct DisplayAlignApp: App {
                 )
             }
 
+            Divider()
+
+            Button("About DisplayAlign…") {
+                NSApp.orderFrontStandardAboutPanel(nil)
+                NSApp.activate(ignoringOtherApps: true)
+            }
+
+            Button("GitHub: sassman/display-align") {
+                NSWorkspace.shared.open(URL(string: "https://github.com/sassman/display-align")!)
+            }
+
+            Button("Missing a feature?") {
+                NSWorkspace.shared.open(URL(
+                    string: "https://github.com/sassman/display-align/issues/new?labels=enhancement&title=Feature%20request%3A%20"
+                )!)
+            }
+
+            Divider()
+
             Button("Quit") { NSApplication.shared.terminate(nil) }
                 .keyboardShortcut("q")
 

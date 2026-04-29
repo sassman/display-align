@@ -45,6 +45,8 @@ cat > "${CONTENTS}/Info.plist" << EOF
     <string>APPL</string>
     <key>NSPrincipalClass</key>
     <string>NSApplication</string>
+    <key>NSHumanReadableCopyright</key>
+    <string>© 2026 Sven Kanoldt. Distributed under the MIT License.</string>
     <key>CFBundleVersion</key>
     <string>${VERSION}</string>
     <key>CFBundleShortVersionString</key>
