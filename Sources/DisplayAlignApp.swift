@@ -11,6 +11,10 @@ struct DisplayAlignApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) var appDelegate
     @StateObject private var manager = DisplayManager()
 
+    private var appVersion: String {
+        Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "unknown"
+    }
+
     var body: some Scene {
         MenuBarExtra {
             if let name = manager.externalName {
@@ -38,6 +42,8 @@ struct DisplayAlignApp: App {
             }
 
             Divider()
+
+            Text("DisplayAlign v\(appVersion)")
 
             Button("About DisplayAlign…") {
                 NSApp.orderFrontStandardAboutPanel(nil)
