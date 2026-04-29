@@ -1,5 +1,7 @@
 # DisplayAlign
 
+![DisplayAlign — about window and menu bar dropdown showing aligned ASUS ROG PG348Q and AOC U2790B displays](assets/banner.png)
+
 A native macOS menubar app that automatically arranges external monitors when connected. No external dependencies — uses CoreGraphics directly.
 
 ## Install
