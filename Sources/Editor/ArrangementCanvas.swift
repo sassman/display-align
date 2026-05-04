@@ -397,7 +397,7 @@ struct ArrangementCanvas: View {
 
     private var currentConfig: PlacementConfig? {
         switch coordinator.phase {
-        case .placed(let c), .previewing(let c, _): return c
+        case .placed(let c): return c
         default: return nil
         }
     }

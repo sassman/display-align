@@ -77,6 +77,8 @@ final class PlacementCoordinator: ObservableObject {
 
     private var savedPositions: [(CGDirectDisplayID, Int32, Int32)] = []
     private var countdownCancellable: AnyCancellable?
+    /// Displays that were unchained during this session (vendor, model pairs to remove from config on save).
+    private var removedDisplays: [(vendor: UInt32, model: UInt32)] = []
 
     // MARK: Init
 
@@ -109,9 +111,9 @@ final class PlacementCoordinator: ObservableObject {
 
     // MARK: - Computed Properties
 
-    /// Whether unsaved changes exist and can be saved (no pending displays remaining).
+    /// Whether unsaved changes exist and can be saved.
     var canFinalize: Bool {
-        pendingDisplays.isEmpty && !committedConfigs.isEmpty
+        !committedConfigs.isEmpty || !removedDisplays.isEmpty
     }
 
     /// The currently active pending display (the one being placed).
@@ -401,14 +403,18 @@ final class PlacementCoordinator: ObservableObject {
         guard let display = arrangement.first(where: { $0.id == displayId }),
               !display.isBuiltin else { return }
 
+        let vendor = CGDisplayVendorNumber(display.displayID)
+        let model = CGDisplayModelNumber(display.displayID)
+
         withAnimation(.spring(response: 0.3, dampingFraction: 0.7)) {
             arrangement.removeAll { $0.id == displayId }
             committedConfigs.removeValue(forKey: displayId)
+            removedDisplays.append((vendor: vendor, model: model))
             pendingDisplays.append(PendingDisplay(
-                id: "\(CGDisplayVendorNumber(display.displayID))-\(CGDisplayModelNumber(display.displayID))",
+                id: "\(vendor)-\(model)",
                 name: display.name,
-                vendor: CGDisplayVendorNumber(display.displayID),
-                model: CGDisplayModelNumber(display.displayID),
+                vendor: vendor,
+                model: model,
                 width: display.width,
                 height: display.height
             ))
@@ -464,7 +470,7 @@ final class PlacementCoordinator: ObservableObject {
     /// Accept current placement: add to arrangement, continue with next pending.
     func confirmPlacement() {
         guard case .placed = phase else { return }
-        withAnimation(.spring(response: 0.3, dampingFraction: 0.7)) {
+        _ = withAnimation(.spring(response: 0.3, dampingFraction: 0.7)) {
             commitPlacedDisplay()
         }
     }
@@ -495,6 +501,8 @@ final class PlacementCoordinator: ObservableObject {
 
         arrangement.append(canvasDisplay)
         committedConfigs[canvasId] = config
+        // If this display was previously unchained, it's no longer a removal
+        removedDisplays.removeAll { $0.vendor == pending.vendor && $0.model == pending.model }
 
         if pendingDisplays.isEmpty {
             phase = .idle
@@ -525,6 +533,13 @@ final class PlacementCoordinator: ObservableObject {
     /// Trigger preview + countdown for all changed displays.
     func finalizeArrangement() {
         guard canFinalize else { return }
+
+        // If only removals (no position changes), commit directly without preview
+        if committedConfigs.isEmpty {
+            commitAllConfigs()
+            return
+        }
+
         guard let firstConfig = committedConfigs.values.first else { return }
         applyPhysicalPreview()
         phase = .previewing(firstConfig, secondsLeft: 20)
@@ -926,6 +941,12 @@ final class PlacementCoordinator: ObservableObject {
                 )
                 cfg.arrangements[arrIdx].flexible.append(flex)
             }
+        }
+
+        // Remove unchained displays from config
+        for removed in removedDisplays {
+            cfg.arrangements[arrIdx].stacked.removeAll { $0.vendor == removed.vendor && $0.model == removed.model }
+            cfg.arrangements[arrIdx].flexible.removeAll { $0.vendor == removed.vendor && $0.model == removed.model }
         }
 
         cfg.save()
