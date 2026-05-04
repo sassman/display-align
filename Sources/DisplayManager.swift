@@ -355,14 +355,14 @@ final class DisplayManager: ObservableObject {
                 alert.informativeText = """
                 "\(name)" (vendor:\(vendor), model:\(model)) is already in the "\(arrName)" arrangement, but the active one is "\(self.activeArrangement)".
 
-                Activate "\(arrName)", stack the display in the current arrangement, or ignore it?
+                Activate "\(arrName)", stack it above the built-in, customize placement, or ignore?
                 """
             } else {
                 alert.messageText = "Unknown Display Detected"
                 alert.informativeText = """
                 "\(name)" (vendor:\(vendor), model:\(model)) is not in any arrangement.
 
-                Stack it above the built-in display, or ignore it?
+                Stack it above the built-in, customize placement, or ignore?
                 """
             }
             alert.alertStyle = .informational
@@ -374,17 +374,34 @@ final class DisplayManager: ObservableObject {
                 alert.addButton(withTitle: "Activate \"\(arrName)\"")
             }
             alert.addButton(withTitle: "Stack Above")
+            alert.addButton(withTitle: "Customize…")
             alert.addButton(withTitle: "Ignore")
+
+            // Position alert on built-in display
+            if let builtinScreen = NSScreen.screens.first(where: {
+                let screenNumber = $0.deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? CGDirectDisplayID
+                return screenNumber.map { CGDisplayIsBuiltin($0) != 0 } ?? false
+            }) {
+                alert.layout()
+                let alertFrame = alert.window.frame
+                let x = builtinScreen.frame.midX - alertFrame.width / 2
+                let y = builtinScreen.frame.midY - alertFrame.height / 2
+                alert.window.setFrameOrigin(NSPoint(x: x, y: y))
+                alert.window.makeKeyAndOrderFront(nil)
+            }
 
             let response = alert.runModal()
             let entry = DisplayEntry(name: name, vendor: vendor, model: model)
 
             // Map the response onto the available actions. Indices shift
             // depending on whether the activate option was added.
+            // Button order: [Activate?] Stack Above | Custom Arrange | Ignore
             let activateResponse: NSApplication.ModalResponse? = knownArrangement == nil
                 ? nil : .alertFirstButtonReturn
             let stackResponse: NSApplication.ModalResponse = knownArrangement == nil
                 ? .alertFirstButtonReturn : .alertSecondButtonReturn
+            let customResponse: NSApplication.ModalResponse = knownArrangement == nil
+                ? .alertSecondButtonReturn : .alertThirdButtonReturn
 
             switch response {
             case activateResponse:
@@ -400,11 +417,62 @@ final class DisplayManager: ObservableObject {
                 if self.autoAlign {
                     self.align()
                 }
+            case customResponse:
+                self.openPlacementEditor(entry: entry)
             default:
                 self.config.addIgnored(entry)
                 self.refresh()
             }
             self.pendingPrompt = false
+        }
+    }
+
+    // MARK: - Placement Editor
+
+    private func openPlacementEditor(entry: DisplayEntry) {
+        guard let layout = computeLayout() else { return }
+        let displays = activeDisplays()
+        guard let builtinID = displays.first(where: { CGDisplayIsBuiltin($0) != 0 }) else { return }
+
+        // Build CanvasDisplay array from resolved layout
+        let canvasDisplays = layout.map { resolved in
+            CanvasDisplay(
+                id: resolved.name,
+                displayID: resolved.displayID,
+                name: resolved.name == "builtin" ? "MacBook" : resolved.name,
+                x: resolved.x,
+                y: resolved.y,
+                width: resolved.width,
+                height: resolved.height,
+                isBuiltin: resolved.name == "builtin"
+            )
+        }
+
+        // Get new display's dimensions
+        let newDisplayID = displays.first {
+            CGDisplayIsBuiltin($0) == 0
+            && CGDisplayVendorNumber($0) == entry.vendor
+            && CGDisplayModelNumber($0) == entry.model
+        }
+        let width = newDisplayID.map { Int(CGDisplayPixelsWide($0)) } ?? 1920
+        let height = newDisplayID.map { Int(CGDisplayPixelsHigh($0)) } ?? 1080
+
+        Task { @MainActor in
+            let coordinator = PlacementCoordinator(
+                arrangement: canvasDisplays,
+                newDisplay: entry,
+                width: width,
+                height: height
+            )
+            coordinator.onCommit = { [weak self] in
+                self?.config = Config.load()
+                self?.publishArrangementState()
+                self?.refresh()
+                if self?.autoAlign == true {
+                    self?.align()
+                }
+            }
+            PlacementWindow.show(coordinator: coordinator, on: builtinID)
         }
     }
 
