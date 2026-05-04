@@ -35,20 +35,16 @@ When a new display connects that isn't in any arrangement, the app opens a visua
 Tap any placed display to re-enter fine-tuning. Unchain (unlink) a display to reposition it from scratch.
 
 <p align="center">
+  <img src="assets/editor-placing.png" alt="Editor showing placing buttons to put a new display to an edge" width="660">
+  <br><em>Place a new Screen to an edge of an exisiting one.</em>
+</p>
+<p align="center">
   <img src="assets/editor-arrangement.png" alt="Editor showing current display arrangement" width="660">
-  <br><em>Current arrangement overview</em>
+  <br><em>Arrange a new Screen to your needs</em>
 </p>
 <p align="center">
-  <img src="assets/editor-directions.png" alt="Direction arrows for choosing placement side" width="660">
-  <br><em>Direction indicators after selecting an anchor</em>
-</p>
-<p align="center">
-  <img src="assets/editor-countdown.png" alt="Live preview with countdown timer" width="660">
-  <br><em>Live preview with revert countdown</em>
-</p>
-<p align="center">
-  <img src="assets/editor-complete.png" alt="Completed multi-display arrangement" width="660">
-  <br><em>Finished arrangement ready to save</em>
+  <img src="assets/editor-ready-to-save.png" alt="Ready to save ends with a live preview to confirm changes" width="660">
+  <br><em>Preview arrangement before saving changes.</em>
 </p>
 
 ## Config
