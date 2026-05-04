@@ -476,6 +476,39 @@ final class DisplayManager: ObservableObject {
         }
     }
 
+    /// Opens the arrangement editor for the current active arrangement (from menubar).
+    func openArrangementEditor() {
+        guard let layout = computeLayout() else { return }
+        let displays = activeDisplays()
+        guard let builtinID = displays.first(where: { CGDisplayIsBuiltin($0) != 0 }) else { return }
+
+        let canvasDisplays = layout.map { resolved in
+            CanvasDisplay(
+                id: resolved.name,
+                displayID: resolved.displayID,
+                name: resolved.name == "builtin" ? "MacBook" : resolved.name,
+                x: resolved.x,
+                y: resolved.y,
+                width: resolved.width,
+                height: resolved.height,
+                isBuiltin: resolved.name == "builtin"
+            )
+        }
+
+        Task { @MainActor in
+            let coordinator = PlacementCoordinator(arrangement: canvasDisplays)
+            coordinator.onCommit = { [weak self] in
+                self?.config = Config.load()
+                self?.publishArrangementState()
+                self?.refresh()
+                if self?.autoAlign == true {
+                    self?.align()
+                }
+            }
+            PlacementWindow.show(coordinator: coordinator, on: builtinID)
+        }
+    }
+
     // MARK: - Display Change Callback
 
     private func startWatching() {

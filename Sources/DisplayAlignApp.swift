@@ -57,6 +57,11 @@ struct DisplayAlignApp: App {
                 )
             }
 
+            Button("Configure Arrangement…") {
+                manager.openArrangementEditor()
+            }
+            .disabled(manager.externalName == nil)
+
             Divider()
 
             Button("About DisplayAlign…") {

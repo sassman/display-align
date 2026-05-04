@@ -25,7 +25,13 @@ struct FineTunePanel: View {
 
             HStack(spacing: 0) {
                 ForEach(alignmentOptions, id: \.rawValue) { option in
-                    Button(action: { coordinator.updateAlignment(option) }) {
+                    Button(action: {
+                        if isActive(option) {
+                            coordinator.updateOffset(0)
+                        } else {
+                            coordinator.updateAlignment(option)
+                        }
+                    }) {
                         Text(label(for: option))
                             .font(.system(size: 11))
                             .foregroundColor(isActive(option) ? .blue : .white.opacity(0.5))
@@ -33,6 +39,7 @@ struct FineTunePanel: View {
                             .padding(.vertical, 5)
                             .background(isActive(option) ? Color.blue.opacity(0.3) : Color.clear)
                             .cornerRadius(4)
+                            .contentShape(Rectangle())
                     }
                     .buttonStyle(.plain)
                 }
@@ -118,7 +125,7 @@ struct FineTunePanel: View {
 
     private var currentConfig: PlacementConfig? {
         switch coordinator.phase {
-        case .placed(let c), .previewing(let c, _): return c
+        case .placed(let c), .previewing(let c, _), .finetuning(let c, _): return c
         default: return nil
         }
     }

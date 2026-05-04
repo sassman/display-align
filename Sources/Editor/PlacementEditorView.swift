@@ -50,29 +50,64 @@ struct PlacementEditorView: View {
     @ViewBuilder
     private var header: some View {
         VStack(spacing: 4) {
-            Text("PLACING")
-                .font(.system(size: 10, weight: .medium))
-                .tracking(1.5)
-                .foregroundColor(.white.opacity(0.4))
+            if let pending = coordinator.activePending {
+                Text("PLACING")
+                    .font(.system(size: 10, weight: .medium))
+                    .tracking(1.5)
+                    .foregroundColor(.white.opacity(0.4))
 
-            Text(coordinator.newDisplay.name)
-                .font(.system(size: 15, weight: .medium))
-                .foregroundColor(.blue)
+                Text(pending.name)
+                    .font(.system(size: 15, weight: .medium))
+                    .foregroundColor(.blue)
 
-            Text("\(coordinator.effectiveNewWidth) × \(coordinator.effectiveNewHeight)")
-                .font(.system(size: 10, design: .monospaced))
-                .foregroundColor(.blue.opacity(0.5))
-                .padding(.horizontal, 8)
-                .padding(.vertical, 3)
-                .background(Color.blue.opacity(0.05))
-                .cornerRadius(3)
-                .overlay(
-                    RoundedRectangle(cornerRadius: 3)
-                        .strokeBorder(
-                            Color.blue.opacity(0.2),
-                            style: StrokeStyle(lineWidth: 1, dash: [3, 2])
-                        )
-                )
+                Text("\(coordinator.effectiveNewWidth) × \(coordinator.effectiveNewHeight)")
+                    .font(.system(size: 10, design: .monospaced))
+                    .foregroundColor(.blue.opacity(0.5))
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 3)
+                    .background(Color.blue.opacity(0.05))
+                    .cornerRadius(3)
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 3)
+                            .strokeBorder(
+                                Color.blue.opacity(0.2),
+                                style: StrokeStyle(lineWidth: 1, dash: [3, 2])
+                            )
+                    )
+            } else if let finetuned = finetunedDisplay {
+                Text("EDITING")
+                    .font(.system(size: 10, weight: .medium))
+                    .tracking(1.5)
+                    .foregroundColor(.white.opacity(0.4))
+
+                Text(finetuned.name)
+                    .font(.system(size: 15, weight: .medium))
+                    .foregroundColor(.blue)
+
+                Text("\(finetuned.width) × \(finetuned.height)")
+                    .font(.system(size: 10, design: .monospaced))
+                    .foregroundColor(.blue.opacity(0.5))
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 3)
+                    .background(Color.blue.opacity(0.05))
+                    .cornerRadius(3)
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 3)
+                            .strokeBorder(
+                                Color.blue.opacity(0.2),
+                                style: StrokeStyle(lineWidth: 1, dash: [3, 2])
+                            )
+                    )
+            } else {
+                Text("ARRANGEMENT")
+                    .font(.system(size: 10, weight: .medium))
+                    .tracking(1.5)
+                    .foregroundColor(.white.opacity(0.4))
+
+                Text("Configure")
+                    .font(.system(size: 15, weight: .medium))
+                    .foregroundColor(.white.opacity(0.7))
+            }
         }
         .frame(maxWidth: .infinity)
         .padding(.bottom, 12)
@@ -83,12 +118,19 @@ struct PlacementEditorView: View {
         }
     }
 
+    private var finetunedDisplay: CanvasDisplay? {
+        if case .finetuning(_, let displayId) = coordinator.phase {
+            return coordinator.arrangement.first(where: { $0.id == displayId })
+        }
+        return nil
+    }
+
     // MARK: - Bottom Controls
 
     @ViewBuilder
     private var bottomControls: some View {
         switch coordinator.phase {
-        case .placed:
+        case .placed, .finetuning:
             FineTunePanel(coordinator: coordinator)
         case .previewing(_, let seconds):
             CountdownBanner(secondsLeft: seconds)
@@ -103,9 +145,17 @@ struct PlacementEditorView: View {
     private var hintText: String {
         switch coordinator.phase {
         case .idle:
-            return "Click any display to select it as anchor"
+            if coordinator.canFinalize {
+                return "Ready to save — click ✓ to preview"
+            }
+            return "Unchain a display to rearrange it"
         case .anchorSelected:
-            return "Click a direction to place \(coordinator.newDisplay.name)"
+            if coordinator.pendingDisplays.isEmpty {
+                return "Unchain a display to place it here"
+            }
+            return "Click a direction to place the display"
+        case .pickingDisplay:
+            return "Select which display to place"
         default:
             return ""
         }
@@ -116,29 +166,16 @@ struct PlacementEditorView: View {
     @ViewBuilder
     private var windowControls: some View {
         HStack(spacing: 8) {
-            // Green check — placed: start preview, previewing: accept early
+            // Green check — context-dependent action
             if case .placed = coordinator.phase {
-                Button(action: { coordinator.confirmPlacement() }) {
-                    Image(systemName: "checkmark")
-                        .font(.system(size: 12, weight: .semibold))
-                        .foregroundColor(.green.opacity(0.9))
-                        .frame(width: 28, height: 28)
-                        .background(Color.green.opacity(0.2))
-                        .clipShape(Circle())
-                }
-                .buttonStyle(.plain)
-                .transition(.scale.combined(with: .opacity))
+                greenCheckButton(action: { coordinator.confirmPlacement() })
             } else if case .previewing = coordinator.phase {
-                Button(action: { coordinator.acceptPreview() }) {
-                    Image(systemName: "checkmark")
-                        .font(.system(size: 12, weight: .semibold))
-                        .foregroundColor(.green.opacity(0.9))
-                        .frame(width: 28, height: 28)
-                        .background(Color.green.opacity(0.2))
-                        .clipShape(Circle())
-                }
-                .buttonStyle(.plain)
-                .transition(.scale.combined(with: .opacity))
+                greenCheckButton(action: { coordinator.acceptPreview() })
+            } else if coordinator.canFinalize {
+                greenCheckButton(action: {
+                    coordinator.finishFinetuning()
+                    coordinator.finalizeArrangement()
+                })
             }
 
             // Close button — always visible
@@ -159,5 +196,19 @@ struct PlacementEditorView: View {
             }
             .buttonStyle(.plain)
         }
+    }
+
+    @ViewBuilder
+    private func greenCheckButton(action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Image(systemName: "checkmark")
+                .font(.system(size: 12, weight: .semibold))
+                .foregroundColor(.green.opacity(0.9))
+                .frame(width: 28, height: 28)
+                .background(Color.green.opacity(0.2))
+                .clipShape(Circle())
+        }
+        .buttonStyle(.plain)
+        .transition(.scale.combined(with: .opacity))
     }
 }

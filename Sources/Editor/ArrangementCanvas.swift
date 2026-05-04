@@ -19,19 +19,30 @@ struct ArrangementCanvas: View {
                     placedDisplayBlock(rect: placedRect, layout: layout)
                 }
 
-                // Direction indicators
-                if case .anchorSelected(let anchorId) = coordinator.phase {
+                // Chain icon between placed display and anchor
+                if let chainPoint = computeChainPoint(layout: layout) {
+                    chainButton(at: chainPoint, action: { coordinator.unchainPlacement() })
+                }
+
+                // Chain icons between existing adjacent displays
+                existingChainIcons(layout: layout)
+
+                // Direction indicators (only when there are pending displays to place)
+                if case .anchorSelected(let anchorId) = coordinator.phase,
+                   !coordinator.pendingDisplays.isEmpty {
                     DirectionIndicators(coordinator: coordinator, anchorId: anchorId, layout: layout)
                 }
 
-                // Crossing guide
-                if let guide = computeCrossingGuide(layout: layout) {
-                    Path { path in
-                        path.move(to: guide.start)
-                        path.addLine(to: guide.end)
-                    }
-                    .stroke(Color.orange.opacity(0.6), lineWidth: 2)
+                // Display picker (when multiple pending displays available)
+                if case .pickingDisplay(let anchorId, let position) = coordinator.phase {
+                    DisplayPicker(
+                        coordinator: coordinator,
+                        anchorId: anchorId,
+                        position: position,
+                        layout: layout
+                    )
                 }
+
             }
         }
         .frame(width: canvasSize.width, height: canvasSize.height)
@@ -120,16 +131,23 @@ struct ArrangementCanvas: View {
     @ViewBuilder
     private func displayBlock(for display: CanvasDisplay, layout: ScaledLayout) -> some View {
         let rect = scaledRect(for: display, layout: layout)
+        let isBeingFinetuned: Bool = {
+            if case .finetuning(_, let id) = coordinator.phase { return id == display.id }
+            return false
+        }()
         let isSelected: Bool = {
             if case .anchorSelected(let id) = coordinator.phase { return id == display.id }
-            return false
+            return isBeingFinetuned
         }()
 
         RoundedRectangle(cornerRadius: 6)
             .fill(isSelected ? Color.blue.opacity(0.25) : Color(white: 0.15))
             .overlay(
                 RoundedRectangle(cornerRadius: 6)
-                    .stroke(isSelected ? Color.blue.opacity(0.8) : Color.white.opacity(0.3), lineWidth: 1)
+                    .stroke(
+                        isSelected ? Color.blue.opacity(0.8) : Color.white.opacity(0.3),
+                        lineWidth: 1
+                    )
             )
             .overlay(
                 VStack(spacing: 2) {
@@ -144,10 +162,31 @@ struct ArrangementCanvas: View {
                 .padding(4)
             )
             .frame(width: rect.width, height: rect.height)
+            .contentShape(Rectangle())
+            .onTapGesture {
+                guard !display.isBuiltin else { return }
+                coordinator.handleDisplayTap(display.id)
+            }
+            .gesture(
+                DragGesture()
+                    .onChanged { value in
+                        guard case .finetuning(let config, let editId) = coordinator.phase,
+                              editId == display.id else { return }
+                        let isVerticalDrag = (config.position == .left || config.position == .right)
+                        let delta: CGFloat = isVerticalDrag ? value.translation.height : value.translation.width
+                        let pixelDelta = Int(delta / layout.scale)
+                        let snapped = ((dragStartOffset + pixelDelta) / 5) * 5
+                        coordinator.updateOffset(snapped)
+                    }
+                    .onEnded { _ in
+                        guard case .finetuning = coordinator.phase else { return }
+                        dragStartOffset = coordinator.currentOffset
+                    }
+            )
             .position(x: rect.midX, y: rect.midY)
             .shadow(color: isSelected ? .blue.opacity(0.3) : .clear, radius: 10)
-            .onTapGesture {
-                coordinator.selectAnchor(display.id)
+            .onChange(of: isBeingFinetuned) { _, finetuning in
+                if finetuning { dragStartOffset = coordinator.currentOffset }
             }
     }
 
@@ -157,6 +196,7 @@ struct ArrangementCanvas: View {
     private func placedDisplayBlock(rect: CGRect, layout: ScaledLayout) -> some View {
         let config = currentConfig!
         let isVerticalDrag = (config.position == .left || config.position == .right)
+        let displayName = coordinator.activePending?.name ?? ""
 
         RoundedRectangle(cornerRadius: 6)
             .fill(Color.blue.opacity(0.3))
@@ -166,12 +206,12 @@ struct ArrangementCanvas: View {
             )
             .overlay(
                 VStack(spacing: 4) {
-                    Text(coordinator.newDisplay.name)
+                    Text(displayName)
                         .font(.system(size: 9, weight: .medium))
                         .foregroundColor(.blue.opacity(0.9))
                         .lineLimit(1)
                     Button(action: { coordinator.cycleRotation() }) {
-                        Image(systemName: "arrow.trianglehead.2.clockwise.rotate.90")
+                        Image(systemName: "arrow.clockwise")
                             .font(.system(size: 10))
                             .foregroundColor(.blue.opacity(0.6))
                     }
@@ -180,7 +220,8 @@ struct ArrangementCanvas: View {
                 .padding(4)
             )
             .frame(width: rect.width, height: rect.height)
-            .position(x: rect.midX, y: rect.midY)
+            .contentShape(Rectangle())
+            .onTapGesture { coordinator.confirmPlacement() }
             .gesture(
                 DragGesture()
                     .onChanged { value in
@@ -193,6 +234,7 @@ struct ArrangementCanvas: View {
                         dragStartOffset = coordinator.currentOffset
                     }
             )
+            .position(x: rect.midX, y: rect.midY)
             .onAppear { dragStartOffset = coordinator.currentOffset }
             .animation(.easeInOut(duration: 0.15), value: coordinator.phase)
     }
@@ -249,37 +291,107 @@ struct ArrangementCanvas: View {
         }
     }
 
-    // MARK: - Crossing Guide
+    // MARK: - Chain Buttons
 
-    struct CrossingGuide {
-        let start: CGPoint
-        let end: CGPoint
+    @ViewBuilder
+    private func chainButton(at point: CGPoint, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Image(systemName: "link")
+                .font(.system(size: 9, weight: .medium))
+                .foregroundColor(Color.yellow.opacity(0.4))
+                .frame(width: 20, height: 20)
+                .background(Color.yellow.opacity(0.06))
+                .clipShape(Circle())
+        }
+        .buttonStyle(.plain)
+        .position(x: point.x, y: point.y)
+        .transition(.scale.combined(with: .opacity))
     }
 
-    private func computeCrossingGuide(layout: ScaledLayout) -> CrossingGuide? {
-        guard let placedRect = computePlacedRect(layout: layout),
-              let config = currentConfig,
-              let anchor = coordinator.arrangement.first(where: { $0.id == config.anchorName })
+    /// Chain icons between existing adjacent displays in the arrangement.
+    @ViewBuilder
+    private func existingChainIcons(layout: ScaledLayout) -> some View {
+        let pairs = coordinator.adjacentPairs()
+        ForEach(Array(pairs.enumerated()), id: \.offset) { _, pair in
+            if let point = computeExistingChainPoint(pair: pair, layout: layout) {
+                chainButton(at: point, action: {
+                    coordinator.unchainExistingDisplay(pair.displayB)
+                })
+            }
+        }
+    }
+
+    private func computeExistingChainPoint(pair: PlacementCoordinator.AdjacentPair, layout: ScaledLayout) -> CGPoint? {
+        guard let displayA = coordinator.arrangement.first(where: { $0.id == pair.displayA }),
+              let displayB = coordinator.arrangement.first(where: { $0.id == pair.displayB })
+        else { return nil }
+
+        let rectA = scaledRect(for: displayA, layout: layout)
+        let rectB = scaledRect(for: displayB, layout: layout)
+
+        switch pair.edge {
+        case .above:
+            // B is above A → shared edge at A.minY / B.maxY
+            let y = rectA.minY
+            let overlapLeft = max(rectA.minX, rectB.minX)
+            let overlapRight = min(rectA.maxX, rectB.maxX)
+            guard overlapRight > overlapLeft else { return nil }
+            return CGPoint(x: (overlapLeft + overlapRight) / 2, y: y)
+        case .below:
+            let y = rectA.maxY
+            let overlapLeft = max(rectA.minX, rectB.minX)
+            let overlapRight = min(rectA.maxX, rectB.maxX)
+            guard overlapRight > overlapLeft else { return nil }
+            return CGPoint(x: (overlapLeft + overlapRight) / 2, y: y)
+        case .left:
+            let x = rectA.minX
+            let overlapTop = max(rectA.minY, rectB.minY)
+            let overlapBottom = min(rectA.maxY, rectB.maxY)
+            guard overlapBottom > overlapTop else { return nil }
+            return CGPoint(x: x, y: (overlapTop + overlapBottom) / 2)
+        case .right:
+            let x = rectA.maxX
+            let overlapTop = max(rectA.minY, rectB.minY)
+            let overlapBottom = min(rectA.maxY, rectB.maxY)
+            guard overlapBottom > overlapTop else { return nil }
+            return CGPoint(x: x, y: (overlapTop + overlapBottom) / 2)
+        }
+    }
+
+    // Chain point for the placed display ↔ anchor
+    private func computeChainPoint(layout: ScaledLayout) -> CGPoint? {
+        guard let config = currentConfig,
+              let anchor = coordinator.arrangement.first(where: { $0.id == config.anchorName }),
+              let placedRect = computePlacedRect(layout: layout)
         else { return nil }
 
         let anchorRect = scaledRect(for: anchor, layout: layout)
 
         switch config.position {
-        case .left, .right:
-            let x = config.position == .left ? anchorRect.minX : anchorRect.maxX
+        case .left:
+            let x = anchorRect.minX
             let overlapTop = max(placedRect.minY, anchorRect.minY)
             let overlapBottom = min(placedRect.maxY, anchorRect.maxY)
             guard overlapBottom > overlapTop else { return nil }
-            let midY = (overlapTop + overlapBottom) / 2
-            return CrossingGuide(start: CGPoint(x: x - 10, y: midY), end: CGPoint(x: x + 10, y: midY))
-
-        case .above, .below:
-            let y = config.position == .above ? anchorRect.minY : anchorRect.maxY
+            return CGPoint(x: x, y: (overlapTop + overlapBottom) / 2)
+        case .right:
+            let x = anchorRect.maxX
+            let overlapTop = max(placedRect.minY, anchorRect.minY)
+            let overlapBottom = min(placedRect.maxY, anchorRect.maxY)
+            guard overlapBottom > overlapTop else { return nil }
+            return CGPoint(x: x, y: (overlapTop + overlapBottom) / 2)
+        case .above:
+            let y = anchorRect.minY
             let overlapLeft = max(placedRect.minX, anchorRect.minX)
             let overlapRight = min(placedRect.maxX, anchorRect.maxX)
             guard overlapRight > overlapLeft else { return nil }
-            let midX = (overlapLeft + overlapRight) / 2
-            return CrossingGuide(start: CGPoint(x: midX, y: y - 10), end: CGPoint(x: midX, y: y + 10))
+            return CGPoint(x: (overlapLeft + overlapRight) / 2, y: y)
+        case .below:
+            let y = anchorRect.maxY
+            let overlapLeft = max(placedRect.minX, anchorRect.minX)
+            let overlapRight = min(placedRect.maxX, anchorRect.maxX)
+            guard overlapRight > overlapLeft else { return nil }
+            return CGPoint(x: (overlapLeft + overlapRight) / 2, y: y)
         }
     }
 

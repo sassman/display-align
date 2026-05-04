@@ -18,6 +18,18 @@ struct CanvasDisplay: Identifiable, Equatable {
     let isBuiltin: Bool
 }
 
+// MARK: - PendingDisplay
+
+/// A display waiting to be placed (the original new one, or unchained from the arrangement).
+struct PendingDisplay: Identifiable, Equatable {
+    let id: String
+    let name: String
+    let vendor: UInt32
+    let model: UInt32
+    let width: Int
+    let height: Int
+}
+
 // MARK: - PlacementConfig
 
 /// Working placement state describing how a new display is positioned relative to an anchor.
@@ -27,6 +39,7 @@ struct PlacementConfig: Equatable {
     var align: FlexibleDisplay.Alignment
     var offset: Int
     var rotation: Int                   // 0, 90, or 270
+    var pendingId: String               // vendor-model identifier for config save
 }
 
 // MARK: - PlacementPhase
@@ -35,7 +48,9 @@ struct PlacementConfig: Equatable {
 enum PlacementPhase: Equatable {
     case idle
     case anchorSelected(String)
+    case pickingDisplay(String, FlexibleDisplay.Position)  // anchorId, position
     case placed(PlacementConfig)
+    case finetuning(PlacementConfig, displayId: String)    // editing a display in-place
     case previewing(PlacementConfig, secondsLeft: Int)
 }
 
@@ -49,12 +64,11 @@ final class PlacementCoordinator: ObservableObject {
 
     @Published var phase: PlacementPhase = .idle
     @Published var arrangement: [CanvasDisplay] = []
+    @Published var pendingDisplays: [PendingDisplay] = []
 
-    // MARK: New Display Info
-
-    let newDisplay: DisplayEntry
-    let newDisplayWidth: Int
-    let newDisplayHeight: Int
+    /// Configs with unsaved changes, keyed by canvas display ID. This is the single source
+    /// of truth for what gets written on save.
+    private(set) var committedConfigs: [String: PlacementConfig] = [:]
 
     /// Called after config is committed (countdown completes). Allows DisplayManager to reload.
     var onCommit: (() -> Void)?
@@ -63,26 +77,56 @@ final class PlacementCoordinator: ObservableObject {
 
     private var savedPositions: [(CGDirectDisplayID, Int32, Int32)] = []
     private var countdownCancellable: AnyCancellable?
-    private var newDisplayID: CGDirectDisplayID?
 
     // MARK: Init
 
+    /// Init for placing a new display (from unknown-display prompt).
     init(arrangement: [CanvasDisplay], newDisplay: DisplayEntry, width: Int, height: Int) {
         self.arrangement = arrangement
-        self.newDisplay = newDisplay
-        self.newDisplayWidth = width
-        self.newDisplayHeight = height
+        self.pendingDisplays = [
+            PendingDisplay(
+                id: "\(newDisplay.vendor)-\(newDisplay.model)",
+                name: newDisplay.name,
+                vendor: newDisplay.vendor,
+                model: newDisplay.model,
+                width: width,
+                height: height
+            )
+        ]
 
-        // Auto-select the topmost display as anchor (topmost stacked, or MacBook if alone)
+        // Auto-select the topmost display as anchor
         if let topmost = arrangement.min(by: { $0.y < $1.y }) {
             self.phase = .anchorSelected(topmost.id)
         }
     }
 
+    /// Init for editing the current arrangement (opened from menubar).
+    init(arrangement: [CanvasDisplay]) {
+        self.arrangement = arrangement
+        self.pendingDisplays = []
+        self.phase = .idle
+    }
+
     // MARK: - Computed Properties
+
+    /// Whether unsaved changes exist and can be saved (no pending displays remaining).
+    var canFinalize: Bool {
+        pendingDisplays.isEmpty && !committedConfigs.isEmpty
+    }
+
+    /// The currently active pending display (the one being placed).
+    var activePending: PendingDisplay? {
+        switch phase {
+        case .placed(let config), .previewing(let config, _):
+            return pendingDisplays.first(where: { $0.id == config.pendingId })
+        default:
+            return pendingDisplays.first
+        }
+    }
 
     /// Effective width accounting for rotation (90/270 swaps dimensions).
     var effectiveNewWidth: Int {
+        guard let pending = activePending else { return 0 }
         let r: Int
         switch phase {
         case .placed(let config), .previewing(let config, _):
@@ -90,11 +134,12 @@ final class PlacementCoordinator: ObservableObject {
         default:
             r = 0
         }
-        return (r == 90 || r == 270) ? newDisplayHeight : newDisplayWidth
+        return (r == 90 || r == 270) ? pending.height : pending.width
     }
 
     /// Effective height accounting for rotation (90/270 swaps dimensions).
     var effectiveNewHeight: Int {
+        guard let pending = activePending else { return 0 }
         let r: Int
         switch phase {
         case .placed(let config), .previewing(let config, _):
@@ -102,15 +147,13 @@ final class PlacementCoordinator: ObservableObject {
         default:
             r = 0
         }
-        return (r == 90 || r == 270) ? newDisplayWidth : newDisplayHeight
+        return (r == 90 || r == 270) ? pending.width : pending.height
     }
 
     /// Current offset from the active config, or 0.
     var currentOffset: Int {
         switch phase {
-        case .placed(let config):
-            return config.offset
-        case .previewing(let config, _):
+        case .placed(let config), .previewing(let config, _), .finetuning(let config, _):
             return config.offset
         default:
             return 0
@@ -119,47 +162,266 @@ final class PlacementCoordinator: ObservableObject {
 
     // MARK: - Phase Transitions
 
-    /// Step 1: User selects an anchor display from the canvas.
+    /// Unified tap handler for display blocks. State machine:
+    ///
+    /// **With pending displays (placement flow):**
+    /// - tap unselected → anchor selection (direction indicators appear)
+    /// - tap already-selected anchor → enter fine-tune
+    /// - tap while fine-tuning same display → exit fine-tune, back to anchor-selected
+    /// - tap a different display (from any sub-state) → switch anchor to that display
+    ///
+    /// **No pending displays (pure editing):**
+    /// - tap any non-builtin → enter fine-tune (switch directly if already fine-tuning another)
+    func handleDisplayTap(_ displayId: String) {
+        if !pendingDisplays.isEmpty {
+            // Placement flow: tap cycles through anchor → fine-tune → anchor
+            switch phase {
+            case .finetuning(_, let editId) where editId == displayId:
+                // Tapping the currently fine-tuned display → back to anchor-selected
+                finishFinetuning()
+                withAnimation(.spring(response: 0.3, dampingFraction: 0.7)) {
+                    phase = .anchorSelected(displayId)
+                }
+
+            case .anchorSelected(let anchorId) where anchorId == displayId:
+                // Tapping the already-selected anchor → enter fine-tune
+                editDisplay(displayId)
+
+            case .placed:
+                // Tapping another display while one is placed → commit placement, go directly to target
+                guard commitPlacedDisplay() != nil else { break }
+                if pendingDisplays.isEmpty {
+                    editDisplay(displayId)
+                } else {
+                    selectAnchor(displayId)
+                }
+
+            case .idle, .anchorSelected, .finetuning:
+                // Tapping a different display → select as anchor
+                if case .finetuning(let prevConfig, let prevId) = phase {
+                    committedConfigs[prevId] = prevConfig
+                }
+                selectAnchor(displayId)
+
+            default:
+                break
+            }
+        } else {
+            // No pending displays: tap always enters/switches fine-tune
+            if case .finetuning(_, let editId) = phase, editId == displayId {
+                // Already fine-tuning this one — no-op (can't exit, nothing else to do)
+                return
+            }
+            editDisplay(displayId)
+        }
+    }
+
+    /// User selects an anchor display from the canvas.
     func selectAnchor(_ anchorId: String) {
         withAnimation(.spring(response: 0.3, dampingFraction: 0.7)) {
             phase = .anchorSelected(anchorId)
         }
     }
 
-    /// Step 2: User picks a position (edge) relative to the anchor.
+    /// User picks a position (edge) relative to the anchor.
     func placeDisplay(position: FlexibleDisplay.Position) {
         guard case .anchorSelected(let anchorId) = phase else { return }
 
-        let defaultAlign: FlexibleDisplay.Alignment
-        switch position {
-        case .above, .below:
-            defaultAlign = .center
-        case .left, .right:
-            defaultAlign = .center
+        if pendingDisplays.count == 1, let pending = pendingDisplays.first {
+            let config = PlacementConfig(
+                anchorName: anchorId,
+                position: position,
+                align: .center,
+                offset: 0,
+                rotation: 0,
+                pendingId: pending.id
+            )
+            phase = .placed(config)
+        } else {
+            withAnimation(.spring(response: 0.3, dampingFraction: 0.7)) {
+                phase = .pickingDisplay(anchorId, position)
+            }
         }
+    }
+
+    /// User picks a display from the picker.
+    func selectPendingForPlacement(_ pendingId: String) {
+        guard case .pickingDisplay(let anchorId, let position) = phase else { return }
 
         let config = PlacementConfig(
             anchorName: anchorId,
             position: position,
-            align: defaultAlign,
+            align: .center,
             offset: 0,
-            rotation: 0
+            rotation: 0,
+            pendingId: pendingId
         )
-        phase = .placed(config)
+        withAnimation(.spring(response: 0.3, dampingFraction: 0.7)) {
+            phase = .placed(config)
+        }
     }
 
-    /// Update the alignment of the currently placed display.
+    /// Update the alignment of the currently placed/finetuned display.
     func updateAlignment(_ align: FlexibleDisplay.Alignment) {
-        guard case .placed(var config) = phase else { return }
-        config.align = align
-        phase = .placed(config)
+        switch phase {
+        case .placed(var config):
+            config.align = align
+            phase = .placed(config)
+        case .finetuning(var config, let displayId):
+            config.align = align
+            phase = .finetuning(config, displayId: displayId)
+            updateDisplayPosition(config: config, displayId: displayId)
+        default:
+            break
+        }
     }
 
-    /// Update the offset of the currently placed display.
+    /// Update the offset of the currently placed/finetuned display.
     func updateOffset(_ offset: Int) {
-        guard case .placed(var config) = phase else { return }
-        config.offset = offset
-        phase = .placed(config)
+        switch phase {
+        case .placed(var config):
+            config.offset = offset
+            phase = .placed(config)
+        case .finetuning(var config, let displayId):
+            config.offset = offset
+            phase = .finetuning(config, displayId: displayId)
+            updateDisplayPosition(config: config, displayId: displayId)
+        default:
+            break
+        }
+    }
+
+    /// Recompute and update a display's position in the arrangement after fine-tune changes.
+    /// Cascades to any displays that use this one as their anchor.
+    private func updateDisplayPosition(config: PlacementConfig, displayId: String) {
+        guard let idx = arrangement.firstIndex(where: { $0.id == displayId }),
+              let anchor = arrangement.first(where: { $0.id == config.anchorName })
+        else { return }
+
+        let display = arrangement[idx]
+        let w = display.width
+        let h = display.height
+        let (px, py): (Int, Int)
+
+        switch config.position {
+        case .left:
+            px = anchor.x - w
+            py = alignY(config.align, offset: config.offset, anchor: anchor, height: h)
+        case .right:
+            px = anchor.x + anchor.width
+            py = alignY(config.align, offset: config.offset, anchor: anchor, height: h)
+        case .above:
+            py = anchor.y - h
+            px = alignX(config.align, offset: config.offset, anchor: anchor, width: w)
+        case .below:
+            py = anchor.y + anchor.height
+            px = alignX(config.align, offset: config.offset, anchor: anchor, width: w)
+        }
+
+        arrangement[idx] = CanvasDisplay(
+            id: display.id,
+            displayID: display.displayID,
+            name: display.name,
+            x: px, y: py,
+            width: w, height: h,
+            isBuiltin: display.isBuiltin
+        )
+
+        committedConfigs[displayId] = config
+
+        // Cascade: reposition any displays anchored to this one
+        cascadeDependents(of: displayId)
+    }
+
+    /// Recursively reposition displays that depend on the given display as their anchor.
+    private func cascadeDependents(of anchorId: String) {
+        guard let anchor = arrangement.first(where: { $0.id == anchorId }) else { return }
+
+        for idx in arrangement.indices {
+            let dep = arrangement[idx]
+            guard dep.id != anchorId, !dep.isBuiltin else { continue }
+
+            // Find config for this dependent — either pre-populated or reconstruct now
+            guard let depConfig = committedConfigs[dep.id],
+                  depConfig.anchorName == anchorId else { continue }
+
+            let w = dep.width
+            let h = dep.height
+            let (px, py): (Int, Int)
+
+            switch depConfig.position {
+            case .left:
+                px = anchor.x - w
+                py = alignY(depConfig.align, offset: depConfig.offset, anchor: anchor, height: h)
+            case .right:
+                px = anchor.x + anchor.width
+                py = alignY(depConfig.align, offset: depConfig.offset, anchor: anchor, height: h)
+            case .above:
+                py = anchor.y - h
+                px = alignX(depConfig.align, offset: depConfig.offset, anchor: anchor, width: w)
+            case .below:
+                py = anchor.y + anchor.height
+                px = alignX(depConfig.align, offset: depConfig.offset, anchor: anchor, width: w)
+            }
+
+            arrangement[idx] = CanvasDisplay(
+                id: dep.id,
+                displayID: dep.displayID,
+                name: dep.name,
+                x: px, y: py,
+                width: w, height: h,
+                isBuiltin: dep.isBuiltin
+            )
+
+            cascadeDependents(of: dep.id)
+        }
+    }
+
+    /// Ensure all non-builtin displays have a reconstructed config (for cascading to work).
+    private func ensureAllConfigsReconstructed() {
+        for display in arrangement where !display.isBuiltin {
+            if committedConfigs[display.id] == nil {
+                if let config = reconstructConfig(for: display) {
+                    committedConfigs[display.id] = config
+                }
+            }
+        }
+    }
+
+    /// Unchain the currently placed display: return to direction picking.
+    func unchainPlacement() {
+        guard case .placed(let config) = phase else { return }
+        withAnimation(.spring(response: 0.3, dampingFraction: 0.7)) {
+            phase = .anchorSelected(config.anchorName)
+        }
+    }
+
+    /// Unchain an existing display from the arrangement: remove it and add to pending.
+    func unchainExistingDisplay(_ displayId: String) {
+        guard let display = arrangement.first(where: { $0.id == displayId }),
+              !display.isBuiltin else { return }
+
+        withAnimation(.spring(response: 0.3, dampingFraction: 0.7)) {
+            arrangement.removeAll { $0.id == displayId }
+            committedConfigs.removeValue(forKey: displayId)
+            pendingDisplays.append(PendingDisplay(
+                id: "\(CGDisplayVendorNumber(display.displayID))-\(CGDisplayModelNumber(display.displayID))",
+                name: display.name,
+                vendor: CGDisplayVendorNumber(display.displayID),
+                model: CGDisplayModelNumber(display.displayID),
+                width: display.width,
+                height: display.height
+            ))
+
+            // Auto-select if only one display remains
+            if arrangement.count == 1, let sole = arrangement.first {
+                phase = .anchorSelected(sole.id)
+            } else if let topmost = arrangement.min(by: { $0.y < $1.y }) {
+                phase = .anchorSelected(topmost.id)
+            } else {
+                phase = .idle
+            }
+        }
     }
 
     /// Cycle rotation: 0 -> 90 -> 270 -> 0.
@@ -173,29 +435,100 @@ final class PlacementCoordinator: ObservableObject {
         phase = .placed(config)
     }
 
-    /// Start the physical preview countdown (moves display via CG API).
-    func confirmPlacement() {
-        guard case .placed(let config) = phase else { return }
-        applyPhysicalPreview(config: config)
-        phase = .previewing(config, secondsLeft: 20)
-        startCountdown()
+    /// Enter fine-tune mode for a display.
+    func editDisplay(_ displayId: String) {
+        guard let display = arrangement.first(where: { $0.id == displayId }),
+              !display.isBuiltin else { return }
+
+        // If already fine-tuning another display, commit that config first
+        if case .finetuning(let prevConfig, let prevId) = phase {
+            committedConfigs[prevId] = prevConfig
+        }
+
+        // Pre-populate configs for ALL non-builtin displays so cascading works
+        ensureAllConfigsReconstructed()
+
+        guard let config = committedConfigs[displayId] else { return }
+
+        withAnimation(.spring(response: 0.3, dampingFraction: 0.7)) {
+            phase = .finetuning(config, displayId: displayId)
+        }
     }
 
-    /// User intercepts the countdown — revert physical preview, return to placed state.
+    /// Exit fine-tuning mode, storing the current config.
+    func finishFinetuning() {
+        guard case .finetuning(let config, let displayId) = phase else { return }
+        committedConfigs[displayId] = config
+    }
+
+    /// Accept current placement: add to arrangement, continue with next pending.
+    func confirmPlacement() {
+        guard case .placed = phase else { return }
+        withAnimation(.spring(response: 0.3, dampingFraction: 0.7)) {
+            commitPlacedDisplay()
+        }
+    }
+
+    /// Commits the placed display to the arrangement without animation.
+    /// Returns the canvas ID of the committed display, or nil on failure.
+    @discardableResult
+    private func commitPlacedDisplay() -> String? {
+        guard case .placed(let config) = phase else { return nil }
+        guard let pending = pendingDisplays.first(where: { $0.id == config.pendingId }) else { return nil }
+
+        pendingDisplays.removeAll { $0.id == config.pendingId }
+
+        guard let anchor = arrangement.first(where: { $0.id == config.anchorName }) else { return nil }
+        let w = (config.rotation == 90 || config.rotation == 270) ? pending.height : pending.width
+        let h = (config.rotation == 90 || config.rotation == 270) ? pending.width : pending.height
+        let (px, py) = computeOrigin(config: config, pending: pending, anchor: anchor)
+
+        let canvasId = pending.name
+        let canvasDisplay = CanvasDisplay(
+            id: canvasId,
+            displayID: findDisplayID(vendor: pending.vendor, model: pending.model) ?? 0,
+            name: pending.name,
+            x: px, y: py,
+            width: w, height: h,
+            isBuiltin: false
+        )
+
+        arrangement.append(canvasDisplay)
+        committedConfigs[canvasId] = config
+
+        if pendingDisplays.isEmpty {
+            phase = .idle
+        } else {
+            phase = .anchorSelected(canvasId)
+        }
+
+        return canvasId
+    }
+
+    /// User intercepts the countdown — revert physical positions, return to idle for further editing.
     func interceptCountdown() {
         countdownCancellable?.cancel()
         countdownCancellable = nil
-        guard case .previewing(let config, _) = phase else { return }
+        guard case .previewing = phase else { return }
         revertPhysicalPreview()
-        phase = .placed(config)
+        phase = .idle
     }
 
-    /// User accepts the preview early — commit immediately without waiting for countdown.
+    /// User accepts the preview early — commit all immediately.
     func acceptPreview() {
         countdownCancellable?.cancel()
         countdownCancellable = nil
-        guard case .previewing(let config, _) = phase else { return }
-        commitConfig(config)
+        guard case .previewing = phase else { return }
+        commitAllConfigs()
+    }
+
+    /// Trigger preview + countdown for all changed displays.
+    func finalizeArrangement() {
+        guard canFinalize else { return }
+        guard let firstConfig = committedConfigs.values.first else { return }
+        applyPhysicalPreview()
+        phase = .previewing(firstConfig, secondsLeft: 20)
+        startCountdown()
     }
 
     // MARK: - Free Edges
@@ -225,30 +558,196 @@ final class PlacementCoordinator: ObservableObject {
         return free
     }
 
+    // MARK: - Adjacent Pairs (for chain icons)
+
+    struct AdjacentPair: Equatable {
+        let displayA: String
+        let displayB: String
+        let edge: FlexibleDisplay.Position  // edge of A where B touches
+    }
+
+    /// Returns all adjacent display pairs. displayB is always farther from builtin (gets unchained).
+    func adjacentPairs() -> [AdjacentPair] {
+        let depths = computeDepths()
+        var pairs: [AdjacentPair] = []
+        var seen: Set<String> = []
+
+        for a in arrangement {
+            for b in arrangement where b.id != a.id && !b.isBuiltin {
+                let canonical = [a.id, b.id].sorted().joined(separator: "-")
+                guard !seen.contains(canonical) else { continue }
+
+                var edge: FlexibleDisplay.Position?
+                if touchesAbove(anchor: a, other: b) { edge = .above }
+                else if touchesBelow(anchor: a, other: b) { edge = .below }
+                else if touchesLeft(anchor: a, other: b) { edge = .left }
+                else if touchesRight(anchor: a, other: b) { edge = .right }
+
+                guard let foundEdge = edge else { continue }
+                seen.insert(canonical)
+
+                let depthA = depths[a.id] ?? 0
+                let depthB = depths[b.id] ?? 0
+
+                if depthB >= depthA {
+                    pairs.append(AdjacentPair(displayA: a.id, displayB: b.id, edge: foundEdge))
+                } else {
+                    let flippedEdge: FlexibleDisplay.Position
+                    switch foundEdge {
+                    case .above: flippedEdge = .below
+                    case .below: flippedEdge = .above
+                    case .left: flippedEdge = .right
+                    case .right: flippedEdge = .left
+                    }
+                    pairs.append(AdjacentPair(displayA: b.id, displayB: a.id, edge: flippedEdge))
+                }
+            }
+        }
+
+        return pairs
+    }
+
+    /// BFS from builtin to compute depth for each display.
+    private func computeDepths() -> [String: Int] {
+        var depths: [String: Int] = [:]
+        guard let builtin = arrangement.first(where: { $0.isBuiltin }) else { return depths }
+
+        var queue: [String] = [builtin.id]
+        depths[builtin.id] = 0
+
+        while !queue.isEmpty {
+            let current = queue.removeFirst()
+            let currentDepth = depths[current]!
+            guard let currentDisplay = arrangement.first(where: { $0.id == current }) else { continue }
+
+            for neighbor in arrangement where neighbor.id != current && depths[neighbor.id] == nil {
+                let adjacent = touchesAbove(anchor: currentDisplay, other: neighbor)
+                    || touchesBelow(anchor: currentDisplay, other: neighbor)
+                    || touchesLeft(anchor: currentDisplay, other: neighbor)
+                    || touchesRight(anchor: currentDisplay, other: neighbor)
+                if adjacent {
+                    depths[neighbor.id] = currentDepth + 1
+                    queue.append(neighbor.id)
+                }
+            }
+        }
+
+        return depths
+    }
+
+    // MARK: - Config Reconstruction
+
+    /// Reconstruct a PlacementConfig for an existing display based on its adjacency.
+    private func reconstructConfig(for display: CanvasDisplay) -> PlacementConfig? {
+        let depths = computeDepths()
+        let displayDepth = depths[display.id] ?? 999
+
+        for other in arrangement where other.id != display.id {
+            let otherDepth = depths[other.id] ?? 999
+            guard otherDepth < displayDepth else { continue }
+
+            if touchesAbove(anchor: other, other: display) {
+                let (align, offset) = inferHorizontalAlignment(display: display, anchor: other)
+                return PlacementConfig(
+                    anchorName: other.id, position: .above, align: align,
+                    offset: offset, rotation: 0,
+                    pendingId: "\(CGDisplayVendorNumber(display.displayID))-\(CGDisplayModelNumber(display.displayID))"
+                )
+            } else if touchesBelow(anchor: other, other: display) {
+                let (align, offset) = inferHorizontalAlignment(display: display, anchor: other)
+                return PlacementConfig(
+                    anchorName: other.id, position: .below, align: align,
+                    offset: offset, rotation: 0,
+                    pendingId: "\(CGDisplayVendorNumber(display.displayID))-\(CGDisplayModelNumber(display.displayID))"
+                )
+            } else if touchesLeft(anchor: other, other: display) {
+                let (align, offset) = inferVerticalAlignment(display: display, anchor: other)
+                return PlacementConfig(
+                    anchorName: other.id, position: .left, align: align,
+                    offset: offset, rotation: 0,
+                    pendingId: "\(CGDisplayVendorNumber(display.displayID))-\(CGDisplayModelNumber(display.displayID))"
+                )
+            } else if touchesRight(anchor: other, other: display) {
+                let (align, offset) = inferVerticalAlignment(display: display, anchor: other)
+                return PlacementConfig(
+                    anchorName: other.id, position: .right, align: align,
+                    offset: offset, rotation: 0,
+                    pendingId: "\(CGDisplayVendorNumber(display.displayID))-\(CGDisplayModelNumber(display.displayID))"
+                )
+            }
+        }
+
+        return nil
+    }
+
+    private func inferHorizontalAlignment(display: CanvasDisplay, anchor: CanvasDisplay) -> (FlexibleDisplay.Alignment, Int) {
+        let centerX = anchor.x + (anchor.width - display.width) / 2
+        let leftX = anchor.x
+        let rightX = anchor.x + anchor.width - display.width
+
+        if display.x == centerX { return (.center, 0) }
+        if display.x == leftX { return (.left_edge, 0) }
+        if display.x == rightX { return (.right_edge, 0) }
+
+        let dCenter = abs(display.x - centerX)
+        let dLeft = abs(display.x - leftX)
+        let dRight = abs(display.x - rightX)
+
+        if dCenter <= dLeft && dCenter <= dRight {
+            return (.center, display.x - centerX)
+        } else if dLeft <= dRight {
+            return (.left_edge, display.x - leftX)
+        } else {
+            return (.right_edge, display.x - rightX)
+        }
+    }
+
+    private func inferVerticalAlignment(display: CanvasDisplay, anchor: CanvasDisplay) -> (FlexibleDisplay.Alignment, Int) {
+        let centerY = anchor.y + (anchor.height - display.height) / 2
+        let topY = anchor.y
+        let bottomY = anchor.y + anchor.height - display.height
+
+        if display.y == centerY { return (.center, 0) }
+        if display.y == topY { return (.top, 0) }
+        if display.y == bottomY { return (.bottom, 0) }
+
+        let dCenter = abs(display.y - centerY)
+        let dTop = abs(display.y - topY)
+        let dBottom = abs(display.y - bottomY)
+
+        if dCenter <= dTop && dCenter <= dBottom {
+            return (.center, display.y - centerY)
+        } else if dTop <= dBottom {
+            return (.top, display.y - topY)
+        } else {
+            return (.bottom, display.y - bottomY)
+        }
+    }
+
     // MARK: - Edge Detection (1px tolerance)
 
-    private func touchesAbove(anchor: CanvasDisplay, other: CanvasDisplay) -> Bool {
+    func touchesAbove(anchor: CanvasDisplay, other: CanvasDisplay) -> Bool {
         let edgeY = anchor.y
         let otherBottom = other.y + other.height
         guard abs(otherBottom - edgeY) <= 1 else { return false }
         return horizontalOverlap(a: anchor, b: other)
     }
 
-    private func touchesBelow(anchor: CanvasDisplay, other: CanvasDisplay) -> Bool {
+    func touchesBelow(anchor: CanvasDisplay, other: CanvasDisplay) -> Bool {
         let edgeY = anchor.y + anchor.height
         let otherTop = other.y
         guard abs(otherTop - edgeY) <= 1 else { return false }
         return horizontalOverlap(a: anchor, b: other)
     }
 
-    private func touchesLeft(anchor: CanvasDisplay, other: CanvasDisplay) -> Bool {
+    func touchesLeft(anchor: CanvasDisplay, other: CanvasDisplay) -> Bool {
         let edgeX = anchor.x
         let otherRight = other.x + other.width
         guard abs(otherRight - edgeX) <= 1 else { return false }
         return verticalOverlap(a: anchor, b: other)
     }
 
-    private func touchesRight(anchor: CanvasDisplay, other: CanvasDisplay) -> Bool {
+    func touchesRight(anchor: CanvasDisplay, other: CanvasDisplay) -> Bool {
         let edgeX = anchor.x + anchor.width
         let otherLeft = other.x
         guard abs(otherLeft - edgeX) <= 1 else { return false }
@@ -279,30 +778,24 @@ final class PlacementCoordinator: ObservableObject {
             .autoconnect()
             .sink { [weak self] _ in
                 guard let self else { return }
-                guard case .previewing(let config, let secondsLeft) = self.phase else {
+                guard case .previewing(let cfg, let secondsLeft) = self.phase else {
                     self.countdownCancellable?.cancel()
                     return
                 }
                 if secondsLeft <= 1 {
-                    // Time expired — commit config and dismiss
                     self.countdownCancellable?.cancel()
                     self.countdownCancellable = nil
-                    self.commitConfig(config)
+                    self.commitAllConfigs()
                 } else {
-                    self.phase = .previewing(config, secondsLeft: secondsLeft - 1)
+                    self.phase = .previewing(cfg, secondsLeft: secondsLeft - 1)
                 }
             }
     }
 
     // MARK: - Physical Preview (CG Display Configuration)
 
-    /// Saves current positions, then moves the new display to the computed origin.
-    private func applyPhysicalPreview(config: PlacementConfig) {
-        // Find the new display's CGDirectDisplayID
-        guard let displayID = findNewDisplayID() else { return }
-        self.newDisplayID = displayID
-
-        // Save all current display positions for revert
+    /// Saves current positions, then moves all changed displays to their computed origins.
+    private func applyPhysicalPreview() {
         savedPositions = []
         var ids = [CGDirectDisplayID](repeating: 0, count: 8)
         var count: UInt32 = 0
@@ -312,14 +805,15 @@ final class PlacementCoordinator: ObservableObject {
             savedPositions.append((ids[i], Int32(bounds.origin.x), Int32(bounds.origin.y)))
         }
 
-        // Compute target origin
-        guard let anchor = arrangement.first(where: { $0.id == config.anchorName }) else { return }
-        let (targetX, targetY) = computeOrigin(config: config, anchor: anchor)
-
-        // Apply via CG API
         var cgConfig: CGDisplayConfigRef?
         guard CGBeginDisplayConfiguration(&cgConfig) == .success else { return }
-        CGConfigureDisplayOrigin(cgConfig, displayID, Int32(targetX), Int32(targetY))
+
+        for (displayId, _) in committedConfigs {
+            guard let display = arrangement.first(where: { $0.id == displayId }),
+                  display.displayID != 0 else { continue }
+            CGConfigureDisplayOrigin(cgConfig, display.displayID, Int32(display.x), Int32(display.y))
+        }
+
         CGCompleteDisplayConfiguration(cgConfig, .forSession)
     }
 
@@ -338,30 +832,19 @@ final class PlacementCoordinator: ObservableObject {
 
     // MARK: - Origin Computation
 
-    private func computeOrigin(config: PlacementConfig, anchor: CanvasDisplay) -> (Int, Int) {
-        let w = (config.rotation == 90 || config.rotation == 270) ? newDisplayHeight : newDisplayWidth
-        let h = (config.rotation == 90 || config.rotation == 270) ? newDisplayWidth : newDisplayHeight
+    private func computeOrigin(config: PlacementConfig, pending: PendingDisplay, anchor: CanvasDisplay) -> (Int, Int) {
+        let w = (config.rotation == 90 || config.rotation == 270) ? pending.height : pending.width
+        let h = (config.rotation == 90 || config.rotation == 270) ? pending.width : pending.height
 
         switch config.position {
         case .left:
-            let x = anchor.x - w
-            let y = alignY(config.align, offset: config.offset, anchor: anchor, height: h)
-            return (x, y)
-
+            return (anchor.x - w, alignY(config.align, offset: config.offset, anchor: anchor, height: h))
         case .right:
-            let x = anchor.x + anchor.width
-            let y = alignY(config.align, offset: config.offset, anchor: anchor, height: h)
-            return (x, y)
-
+            return (anchor.x + anchor.width, alignY(config.align, offset: config.offset, anchor: anchor, height: h))
         case .above:
-            let y = anchor.y - h
-            let x = alignX(config.align, offset: config.offset, anchor: anchor, width: w)
-            return (x, y)
-
+            return (alignX(config.align, offset: config.offset, anchor: anchor, width: w), anchor.y - h)
         case .below:
-            let y = anchor.y + anchor.height
-            let x = alignX(config.align, offset: config.offset, anchor: anchor, width: w)
-            return (x, y)
+            return (alignX(config.align, offset: config.offset, anchor: anchor, width: w), anchor.y + anchor.height)
         }
     }
 
@@ -393,64 +876,67 @@ final class PlacementCoordinator: ObservableObject {
 
     // MARK: - Config Commit
 
-    /// Determines stacked vs flexible, updates the active arrangement, saves, and dismisses.
-    private func commitConfig(_ config: PlacementConfig) {
+    /// Saves all changed placements to config and dismisses.
+    private func commitAllConfigs() {
         var cfg = Config.load()
 
-        let entry = newDisplay
-
-        // Find the active arrangement index
         guard let arrIdx = cfg.arrangements.firstIndex(where: { $0.name == cfg.active }) else {
             PlacementWindow.dismiss()
             return
         }
 
-        // Remove the new display from all lists first (in case it was previously configured)
-        cfg.arrangements[arrIdx].stacked.removeAll { $0.vendor == entry.vendor && $0.model == entry.model }
-        cfg.arrangements[arrIdx].flexible.removeAll { $0.vendor == entry.vendor && $0.model == entry.model }
-        cfg.ignored.removeAll { $0.vendor == entry.vendor && $0.model == entry.model }
+        for (displayId, config) in committedConfigs {
+            guard let display = arrangement.first(where: { $0.id == displayId }) else { continue }
 
-        // Displace any display that occupies the same slot (same anchor + position)
-        cfg.arrangements[arrIdx].flexible.removeAll { flex in
-            flex.relative_to == config.anchorName && flex.position == config.position
-        }
-        // If placing above builtin, also displace stacked entries (they occupy above-builtin)
-        if config.position == .above && config.anchorName == "builtin" {
-            cfg.arrangements[arrIdx].stacked.removeAll { _ in true }
-        }
+            let vendor = CGDisplayVendorNumber(display.displayID)
+            let model = CGDisplayModelNumber(display.displayID)
+            let entry = DisplayEntry(name: display.name, vendor: vendor, model: model)
 
-        // Stacked = above + builtin + center + offset 0
-        let isStacked = config.position == .above
-            && config.anchorName == "builtin"
-            && config.align == .center
-            && config.offset == 0
+            // Remove from all lists first
+            cfg.arrangements[arrIdx].stacked.removeAll { $0.vendor == entry.vendor && $0.model == entry.model }
+            cfg.arrangements[arrIdx].flexible.removeAll { $0.vendor == entry.vendor && $0.model == entry.model }
+            cfg.ignored.removeAll { $0.vendor == entry.vendor && $0.model == entry.model }
 
-        if isStacked {
-            cfg.arrangements[arrIdx].stacked.append(entry)
-        } else {
-            let flex = FlexibleDisplay(
-                name: entry.name,
-                vendor: entry.vendor,
-                model: entry.model,
-                position: config.position,
-                relative_to: config.anchorName,
-                align: config.align,
-                offset: config.offset == 0 ? nil : config.offset,
-                rotation: config.rotation == 0 ? nil : config.rotation
-            )
-            cfg.arrangements[arrIdx].flexible.append(flex)
+            // Displace any display that occupies the same slot
+            cfg.arrangements[arrIdx].flexible.removeAll { flex in
+                flex.relative_to == config.anchorName && flex.position == config.position
+            }
+            if config.position == .above && config.anchorName == "builtin" {
+                cfg.arrangements[arrIdx].stacked.removeAll { _ in true }
+            }
+
+            // Stacked = above + builtin + center + offset 0
+            let isStacked = config.position == .above
+                && config.anchorName == "builtin"
+                && config.align == .center
+                && config.offset == 0
+
+            if isStacked {
+                cfg.arrangements[arrIdx].stacked.append(entry)
+            } else {
+                let flex = FlexibleDisplay(
+                    name: entry.name,
+                    vendor: entry.vendor,
+                    model: entry.model,
+                    position: config.position,
+                    relative_to: config.anchorName,
+                    align: config.align,
+                    offset: config.offset == 0 ? nil : config.offset,
+                    rotation: config.rotation == 0 ? nil : config.rotation
+                )
+                cfg.arrangements[arrIdx].flexible.append(flex)
+            }
         }
 
         cfg.save()
         phase = .idle
         onCommit?()
-
         PlacementWindow.dismiss()
     }
 
     // MARK: - Display ID Resolution
 
-    private func findNewDisplayID() -> CGDirectDisplayID? {
+    private func findDisplayID(vendor: UInt32, model: UInt32) -> CGDirectDisplayID? {
         var ids = [CGDirectDisplayID](repeating: 0, count: 8)
         var count: UInt32 = 0
         CGGetActiveDisplayList(UInt32(ids.count), &ids, &count)
@@ -460,7 +946,7 @@ final class PlacementCoordinator: ObservableObject {
             guard CGDisplayIsBuiltin(id) == 0 else { continue }
             let v = CGDisplayVendorNumber(id)
             let m = CGDisplayModelNumber(id)
-            if v == newDisplay.vendor && m == newDisplay.model {
+            if v == vendor && m == model {
                 return id
             }
         }
