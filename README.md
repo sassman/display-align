@@ -5,7 +5,7 @@
 A native macOS menubar app that automatically arranges external monitors when connected. No external dependencies, just CoreGraphics.
 
 <p align="center">
-  <img src="assets/editor-placing.png" alt="Visual placement editor showing a display being positioned relative to an anchor" width="560">
+  <img src="assets/editor-placing.png" alt="Visual placement editor showing a display being positioned relative to an anchor" width="660">
 </p>
 
 ## Install
@@ -35,19 +35,19 @@ When a new display connects that isn't in any arrangement, the app opens a visua
 Tap any placed display to re-enter fine-tuning. Unchain (unlink) a display to reposition it from scratch.
 
 <p align="center">
-  <img src="assets/editor-arrangement.png" alt="Editor showing current display arrangement" width="420">
+  <img src="assets/editor-arrangement.png" alt="Editor showing current display arrangement" width="660">
   <br><em>Current arrangement overview</em>
 </p>
 <p align="center">
-  <img src="assets/editor-directions.png" alt="Direction arrows for choosing placement side" width="420">
+  <img src="assets/editor-directions.png" alt="Direction arrows for choosing placement side" width="660">
   <br><em>Direction indicators after selecting an anchor</em>
 </p>
 <p align="center">
-  <img src="assets/editor-countdown.png" alt="Live preview with countdown timer" width="420">
+  <img src="assets/editor-countdown.png" alt="Live preview with countdown timer" width="660">
   <br><em>Live preview with revert countdown</em>
 </p>
 <p align="center">
-  <img src="assets/editor-complete.png" alt="Completed multi-display arrangement" width="420">
+  <img src="assets/editor-complete.png" alt="Completed multi-display arrangement" width="660">
   <br><em>Finished arrangement ready to save</em>
 </p>
 
