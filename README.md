@@ -211,7 +211,9 @@ When a display connects that isn't in the active arrangement, you get a prompt. 
   <img src="assets/prompt-known.png" alt="Already-Known Display Detected prompt with Activate / Stack Above / Ignore buttons" width="320">
 </p>
 
-Edit `~/.config/display-align/config.json` directly to rename arrangements or move displays to `flexible`. The "Open Config..." menu item reveals the file in Finder.
+Edit `~/.config/display-align/config.json` directly to rename arrangements or customize by hand. The "Open Config..." menu item reveals the file in Finder.
+
+Or, use the visual editor to customize arrangements, by use the "Configure Arrangement.." menu item.
 
 ## Build from source
 
