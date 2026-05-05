@@ -202,8 +202,9 @@ When a display connects that isn't in the active arrangement, you get a prompt. 
 
 | Button | Effect |
 |---|---|
-| **Activate "&lt;name&gt;"** | Only shown if another arrangement already knows the display (first match in config order wins). Switches `active` to that arrangement. |
-| **Stack Above** | Adds the display to `stacked`. Mutates the active arrangement if it's empty; otherwise clones it (auto-named `<current> 2`, `<current> 3`, …) so an existing layout isn't overwritten. |
+| **Activate X** | If another arrangement already knows the display. Activate that arrangement. |
+| **Stack Above** | Adds the display to `stacked`. Mutates the active arrangement if it's empty; otherwise clones the active arrangement. |
+| **Customize...** | Opens the visual editor to flexible place the display anywhere. |
 | **Ignore** | Adds to the global `ignored` list. |
 
 <p align="center">
