@@ -2,7 +2,15 @@
 
 ![DisplayAlign — about window and menu bar dropdown showing aligned ASUS ROG PG348Q and AOC U2790B displays](assets/banner.png)
 
-A native macOS menubar app that automatically arranges external monitors when connected. No external dependencies, just CoreGraphics.
+macOS arranges displays well enough — until you need pixel precision, use the same monitors at different desks, or get tired of dragging rectangles in System Settings every time something changes. The built-in UI has no pixel-level control, no saved layouts, and no quick switching.
+
+DisplayAlign fixes that. A native macOS menubar app (pure CoreGraphics, no dependencies) that gives you:
+
+- **Pixel-precise positioning** — visual editor or config file, down to the exact pixel
+- **Named arrangements** (office / home / travel) — switch in one click from the menubar
+- **Auto-applies on connect** — displays land where they belong without opening System Settings
+- **Visual editor** for placing and fine-tuning displays relative to each other
+- **Config file** for full programmatic control when you prefer it
 
 <p align="center">
   <img src="assets/editor-placing.png" alt="Visual placement editor showing a display being positioned relative to an anchor" width="660">
@@ -32,15 +40,15 @@ When a new display connects that isn't in any arrangement, the app opens a visua
 3. **Fine-tune** — drag to adjust offset, pick alignment (top/center/bottom or left/center/right)
 4. **Preview & confirm** — the arrangement applies live with a countdown; tap anywhere to revert
 
-Tap any placed display to re-enter fine-tuning. Unchain (unlink) a display to reposition it from scratch.
+Tap any placed display to adjust it again. Unchain (unlink) a display to reposition it from scratch.
 
 <p align="center">
   <img src="assets/editor-placing.png" alt="Editor showing placing buttons to put a new display to an edge" width="660">
-  <br><em>Place a new Screen to an edge of an exisiting one.</em>
+  <br><em>Place a new display against an edge of an existing one.</em>
 </p>
 <p align="center">
   <img src="assets/editor-arrangement.png" alt="Editor showing current display arrangement" width="660">
-  <br><em>Arrange a new Screen to your needs</em>
+  <br><em>Fine-tune position and alignment.</em>
 </p>
 <p align="center">
   <img src="assets/editor-ready-to-save.png" alt="Ready to save ends with a live preview to confirm changes" width="660">
@@ -49,7 +57,8 @@ Tap any placed display to re-enter fine-tuning. Unchain (unlink) a display to re
 
 ## Config
 
-`~/.config/display-align/config.json`
+<details>
+<summary><code>~/.config/display-align/config.json</code> — full reference</summary>
 
 On first run, the config is seeded with a `default` arrangement and one stacked display. The app reads the file on startup and whenever displays change; edit it to change behavior.
 
@@ -185,6 +194,8 @@ Displays in `ignored` are left alone in every arrangement. The app won't move th
 
 Configs that predate the `active` / `arrangements` schema (top-level `stacked` / `flexible`) get wrapped into a single `default` arrangement on first launch. `ignored` stays at the top level. The migration runs once and rewrites the file in place; no manual editing required.
 
+</details>
+
 ## Unknown displays
 
 When a display connects that isn't in the active arrangement, you get a prompt. Buttons:
@@ -200,24 +211,6 @@ When a display connects that isn't in the active arrangement, you get a prompt. 
 </p>
 
 Edit `~/.config/display-align/config.json` directly to rename arrangements or move displays to `flexible`. The "Open Config..." menu item reveals the file in Finder.
-
-## Finding vendor/model IDs
-
-Connect the display and check the prompt; it shows the vendor and model numbers. Or run:
-
-```sh
-cat <<'EOF' | swift -
-import CoreGraphics
-var ids = [CGDirectDisplayID](repeating: 0, count: 8)
-var count: UInt32 = 0
-CGGetActiveDisplayList(UInt32(ids.count), &ids, &count)
-for i in 0..<Int(count) {
-    let id = ids[i]
-    let builtin = CGDisplayIsBuiltin(id) != 0 ? " (builtin)" : ""
-    print("Display \(id): vendor=\(CGDisplayVendorNumber(id)) model=\(CGDisplayModelNumber(id))\(builtin)")
-}
-EOF
-```
 
 ## Build from source
 
