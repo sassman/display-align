@@ -58,18 +58,18 @@ jobs:
           APPLE_APP_PASSWORD: ${{ secrets.APPLE_APP_PASSWORD }}
         run: |
           source "$HOME/.cargo/env"
-          cargo codesign macos --app DisplayAlign.app
+          cargo codesign macos --app DisplayAlign.app --as zip
 
-          DMG="DisplayAlign-v${{ steps.ver.outputs.version }}.dmg"
-          mv DisplayAlign.dmg "$DMG"
-          SHA=$(shasum -a 256 "$DMG" | awk '{print $1}')
-          echo "dmg=${DMG}" >> "$GITHUB_OUTPUT"
+          ZIP="DisplayAlign-v${{ steps.ver.outputs.version }}.zip"
+          mv DisplayAlign.zip "$ZIP"
+          SHA=$(shasum -a 256 "$ZIP" | awk '{print $1}')
+          echo "zip=${ZIP}" >> "$GITHUB_OUTPUT"
           echo "sha256=${SHA}" >> "$GITHUB_OUTPUT"
 
-      - name: Verify signed DMG
+      - name: Verify signed app
         run: |
           source "$HOME/.cargo/env"
-          cargo codesign verify "${{ steps.sign.outputs.dmg }}" --method macos
+          cargo codesign verify "${{ steps.sign.outputs.zip }}" --method macos
 
       - name: Cleanup certificate
         if: always()
@@ -77,18 +77,18 @@ jobs:
           source "$HOME/.cargo/env"
           cargo codesign macos --ci-cleanup-cert
 
-      - name: Upload DMG artifact (workflow_dispatch)
+      - name: Upload artifact (workflow_dispatch)
         if: github.event_name == 'workflow_dispatch'
         uses: actions/upload-artifact@v7
         with:
-          name: DisplayAlign-dmg
-          path: ${{ steps.sign.outputs.dmg }}
+          name: DisplayAlign-zip
+          path: ${{ steps.sign.outputs.zip }}
 
       - name: Release
         if: startsWith(github.ref, 'refs/tags/v')
         uses: softprops/action-gh-release@v3
         with:
-          files: ${{ steps.sign.outputs.dmg }}
+          files: ${{ steps.sign.outputs.zip }}
           generate_release_notes: true
 
   publish-homebrew-cask:
@@ -127,7 +127,7 @@ jobs:
             version "${VERSION_NUM}"
             sha256 "${SHA256}"
 
-            url "https://github.com/sassman/display-align/releases/download/v#{version}/DisplayAlign-v#{version}.dmg"
+            url "https://github.com/sassman/display-align/releases/download/v#{version}/DisplayAlign-v#{version}.zip"
             name "DisplayAlign"
             desc "Automatic display arrangement for macOS"
             homepage "https://github.com/sassman/display-align"
