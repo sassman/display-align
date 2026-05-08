@@ -68,8 +68,10 @@ jobs:
 
       - name: Verify signed app
         run: |
-          source "$HOME/.cargo/env"
-          cargo codesign verify "${{ steps.sign.outputs.zip }}" --method macos
+          ditto -x -k "${{ steps.sign.outputs.zip }}" /tmp/verify
+          codesign --verify --deep --strict /tmp/verify/DisplayAlign.app
+          spctl --assess --verbose /tmp/verify/DisplayAlign.app
+          stapler validate /tmp/verify/DisplayAlign.app
 
       - name: Cleanup certificate
         if: always()
