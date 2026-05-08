@@ -28,6 +28,11 @@ struct DisplayAlignApp: App {
 
             Toggle("Auto-align on connect", isOn: $manager.autoAlign)
 
+            Toggle("Start at Login", isOn: Binding(
+                get: { manager.launchAtLogin },
+                set: { manager.setLaunchAtLogin($0) }
+            ))
+
             Divider()
 
             if manager.arrangementNames.count > 1 {

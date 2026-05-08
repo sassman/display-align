@@ -1,6 +1,7 @@
 import Foundation
 import CoreGraphics
 import AppKit
+import ServiceManagement
 
 /// Resolved rectangle for a display during layout computation.
 struct ResolvedDisplay {
@@ -16,6 +17,7 @@ final class DisplayManager: ObservableObject {
     @Published var externalName: String?
     @Published var isAligned = false
     @Published var autoAlign = true
+    @Published private(set) var launchAtLogin = SMAppService.mainApp.status == .enabled
     @Published var statusMessage = "Starting..."
 
     /// Mirrors `config.arrangements.map(\.name)`. Republished after switches
@@ -53,6 +55,26 @@ final class DisplayManager: ObservableObject {
         refresh()
         if autoAlign, hasConfiguredExternals() {
             align()
+        }
+    }
+
+    func setLaunchAtLogin(_ enabled: Bool) {
+        do {
+            if enabled {
+                try SMAppService.mainApp.register()
+            } else {
+                try SMAppService.mainApp.unregister()
+            }
+            launchAtLogin = SMAppService.mainApp.status == .enabled
+        } catch {
+            launchAtLogin = SMAppService.mainApp.status == .enabled
+            let alert = NSAlert()
+            alert.alertStyle = .informational
+            alert.messageText = enabled
+                ? "Could not enable Start at Login"
+                : "Could not disable Start at Login"
+            alert.informativeText = error.localizedDescription
+            alert.runModal()
         }
     }
 
