@@ -11,6 +11,9 @@ DerivedData/
 *.ipa
 *.xcuserstate
 
+# Claude
+.claude/
+
 # macOS
 .DS_Store
 ._*
