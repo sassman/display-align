@@ -139,9 +139,22 @@ struct ArrangementCanvas: View {
             if case .anchorSelected(let id) = coordinator.phase { return id == display.id }
             return isBeingFinetuned
         }()
+        let isDockOwner = (coordinator.workingDockOwner == display.id)
+        let ownerHue = Color(red: 0.78, green: 0.45, blue: 0.85)
 
         RoundedRectangle(cornerRadius: 6)
             .fill(isSelected ? Color.blue.opacity(0.25) : Color(white: 0.15))
+            .overlay(
+                // Orchid tint under the selection state — visible only when not selected.
+                RoundedRectangle(cornerRadius: 6)
+                    .fill(ownerHue.opacity(isDockOwner && !isSelected ? 0.12 : 0))
+            )
+            .overlay(
+                // Orchid stroke for dock-owner state; layered below the selection stroke.
+                RoundedRectangle(cornerRadius: 6)
+                    .stroke(ownerHue.opacity(0.7), lineWidth: 1.5)
+                    .opacity(isDockOwner ? 1 : 0)
+            )
             .overlay(
                 RoundedRectangle(cornerRadius: 6)
                     .stroke(
@@ -161,6 +174,18 @@ struct ArrangementCanvas: View {
                 }
                 .padding(4)
             )
+            .overlay(alignment: .topTrailing) {
+                // Dock-owner radio. Independent of the outer tap/drag gestures.
+                Button {
+                    coordinator.setDockOwner(display.id)
+                } label: {
+                    Image(systemName: isDockOwner ? "largecircle.fill.circle" : "circle")
+                        .font(.system(size: 11))
+                        .foregroundColor(isDockOwner ? ownerHue : .white.opacity(0.4))
+                        .padding(4)
+                }
+                .buttonStyle(.plain)
+            }
             .frame(width: rect.width, height: rect.height)
             .contentShape(Rectangle())
             .onTapGesture {
@@ -184,10 +209,18 @@ struct ArrangementCanvas: View {
                     }
             )
             .position(x: rect.midX, y: rect.midY)
-            .shadow(color: isSelected ? .blue.opacity(0.3) : .clear, radius: 10)
+            .shadow(color: shadowColor(isSelected: isSelected, isDockOwner: isDockOwner, ownerHue: ownerHue), radius: 10)
             .onChange(of: isBeingFinetuned) { _, finetuning in
                 if finetuning { dragStartOffset = coordinator.currentOffset }
             }
+    }
+
+    /// Pick the appropriate shadow color: blue for selection (dominant),
+    /// orchid for dock-owner-only, clear otherwise.
+    private func shadowColor(isSelected: Bool, isDockOwner: Bool, ownerHue: Color) -> Color {
+        if isSelected { return .blue.opacity(0.3) }
+        if isDockOwner { return ownerHue.opacity(0.25) }
+        return .clear
     }
 
     // MARK: - Placed Display Block
