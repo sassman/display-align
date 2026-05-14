@@ -25,6 +25,10 @@ final class DisplayManager: ObservableObject {
     @Published private(set) var arrangementNames: [String] = []
     /// Mirrors `config.active`. Driven by `switchArrangement(_:)`.
     @Published private(set) var activeArrangement: String = ""
+    /// Effective dock owner name for the active arrangement. "builtin" if unset.
+    @Published private(set) var dockOwner: String = "builtin"
+    /// "builtin" + all displays in the active arrangement, in stacked-then-flexible order.
+    @Published private(set) var dockOwnerCandidates: [String] = ["builtin"]
 
     private var config: Config
     private var pendingPrompt = false
@@ -44,6 +48,10 @@ final class DisplayManager: ObservableObject {
     private func publishArrangementState() {
         arrangementNames = config.arrangements.map(\.name)
         activeArrangement = config.active
+        dockOwner = config.current.effectiveDockOwner
+        dockOwnerCandidates = ["builtin"]
+            + config.current.stacked.map(\.name)
+            + config.current.flexible.map(\.name)
     }
 
     /// Switch the active arrangement and re-evaluate connected displays.
@@ -56,6 +64,22 @@ final class DisplayManager: ObservableObject {
         if autoAlign, hasConfiguredExternals() {
             align()
         }
+    }
+
+    /// Set the dock owner for the active arrangement. Pass `nil` (or `"builtin"`)
+    /// to revert to the built-in screen. Persists, republishes state, refreshes,
+    /// and re-aligns if `autoAlign` is on.
+    func setDockOwner(_ name: String?) {
+        guard let idx = config.arrangements.firstIndex(where: { $0.name == config.active })
+        else { return }
+        // Normalize: "builtin" and nil are equivalent; we persist as nil.
+        let resolved: String? = (name == nil || name == "builtin") ? nil : name
+        guard config.arrangements[idx].dock_owner != resolved else { return }
+        config.arrangements[idx].dock_owner = resolved
+        config.save()
+        publishArrangementState()
+        refresh()
+        if autoAlign { align() }
     }
 
     func setLaunchAtLogin(_ enabled: Bool) {
