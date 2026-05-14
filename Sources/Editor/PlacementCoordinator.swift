@@ -967,6 +967,10 @@ final class PlacementCoordinator: ObservableObject {
             cfg.arrangements[arrIdx].flexible.removeAll { $0.vendor == removed.vendor && $0.model == removed.model }
         }
 
+        // Persist working dock owner. Normalize: "builtin" stores as nil.
+        cfg.arrangements[arrIdx].dock_owner =
+            workingDockOwner == "builtin" ? nil : workingDockOwner
+
         cfg.save()
         phase = .idle
         onCommit?()
