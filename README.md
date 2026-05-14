@@ -8,6 +8,7 @@ DisplayAlign fixes that. A native macOS menubar app (pure CoreGraphics, no depen
 
 - **Pixel-precise positioning** — visual editor or config file, down to the exact pixel
 - **Named arrangements** (office / home / travel) — switch in one click from the menubar
+- **Dock Owner per arrangement** — pick which display hosts the macOS Dock (and menu bar, depending on macOS settings); defaults to the built-in screen
 - **Auto-applies on connect** — displays land where they belong without opening System Settings
 - **Visual editor** for placing and fine-tuning displays relative to each other
 - **Config file** for full programmatic control when you prefer it
@@ -86,6 +87,7 @@ On first run, the config is seeded with a `default` arrangement and one stacked 
 | `arrangements[].name` | per-arrangement | Speaking name shown in the menu (e.g. `"office"`, `"home"`, `"travel"`). |
 | `arrangements[].stacked` | per-arrangement | Displays centered above the built-in screen. |
 | `arrangements[].flexible` | per-arrangement | Displays positioned relative to another (see below). |
+| `arrangements[].dock_owner` | per-arrangement | Optional. Name of the display that should host the Dock and menu bar for this arrangement. Absent or `"builtin"` ⇒ the built-in screen owns the Dock (default). If the named display isn't connected at align-time, the Dock silently falls back to the built-in screen. |
 
 ### Arrangements (multiple desks / setups)
 
@@ -105,6 +107,7 @@ Each arrangement is an independent layout. Switch from the menubar in one click.
     },
     {
       "name": "office",
+      "dock_owner": "ASUS ROG PG348Q",
       "stacked": [
         { "name": "ASUS ROG PG348Q", "vendor": 1129, "model": 13363 }
       ],
@@ -120,7 +123,32 @@ Each arrangement is an independent layout. Switch from the menubar in one click.
 }
 ```
 
-When more than one arrangement is defined, the menubar shows an **Active Arrangement: \<name\> ▸** submenu. Pick another and the layout re-evaluates (and re-aligns, if *Auto-align on connect* is on).
+When more than one arrangement is defined, the menubar shows an **Active Arrangement: \<name\> ▸** submenu. Pick another and the layout re-evaluates (and re-aligns, if *Auto-align on connect* is on). A sibling **Dock Owner: \<name\> ▸** submenu sets the Dock Owner for the active arrangement — see the [Dock Owner](#dock-owner) section below.
+
+### Dock Owner
+
+Each arrangement can designate one of its displays as the **Dock Owner** — the display that hosts the macOS Dock. Default is the built-in screen, matching the legacy behavior.
+
+```json
+{
+  "name": "office",
+  "dock_owner": "ASUS ROG PG348Q",
+  "stacked": [...],
+  "flexible": [...]
+}
+```
+
+| Field | Value | Meaning |
+|-------|-------|---------|
+| `dock_owner` | `"<display name>"` or absent | A display name from the same arrangement's `stacked` or `flexible`. Absent or `"builtin"` means the built-in screen owns the Dock. |
+
+**How it works.** macOS hosts the Dock on whichever display sits at coordinate origin `(0,0)` — there is no separate "set Dock display" API. DisplayAlign translates the entire resolved layout at apply-time so the chosen Dock Owner lands at `(0,0)`. Your authored anchors and `offset` values in config are not modified — only the on-screen positions translate.
+
+**Menu bar.** With System Settings → Desktop & Dock → Mission Control → *"Displays have separate Spaces"* **on** (the default), every display has its own menu bar regardless of Dock Owner. With it **off**, the menu bar lives on the Dock Owner display.
+
+**Menubar UX.** When the active arrangement has at least one external display, a **Dock Owner: \<name\> ▸** submenu appears in the menubar dropdown next to **Active Arrangement**. The submenu lists `builtin` plus every display in the active arrangement; pick one and DisplayAlign re-aligns immediately. Visual editor: each display block has a small radio button in the top-right corner, with the active Dock Owner displayed in orchid purple.
+
+**Fallback.** If the configured Dock Owner is not connected at align-time, the Dock silently stays on the built-in screen and the rest of the arrangement still aligns. When the named display reconnects, the next align brings the Dock with it. The menu still shows the configured name (with no checkmark in the submenu) until you reconnect or pick another.
 
 ### Stacked (simple)
 

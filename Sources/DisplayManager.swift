@@ -25,6 +25,10 @@ final class DisplayManager: ObservableObject {
     @Published private(set) var arrangementNames: [String] = []
     /// Mirrors `config.active`. Driven by `switchArrangement(_:)`.
     @Published private(set) var activeArrangement: String = ""
+    /// Effective dock owner name for the active arrangement. "builtin" if unset.
+    @Published private(set) var dockOwner: String = "builtin"
+    /// "builtin" + all displays in the active arrangement, in stacked-then-flexible order.
+    @Published private(set) var dockOwnerCandidates: [String] = ["builtin"]
 
     private var config: Config
     private var pendingPrompt = false
@@ -44,6 +48,10 @@ final class DisplayManager: ObservableObject {
     private func publishArrangementState() {
         arrangementNames = config.arrangements.map(\.name)
         activeArrangement = config.active
+        dockOwner = config.current.effectiveDockOwner
+        dockOwnerCandidates = ["builtin"]
+            + config.current.stacked.map(\.name)
+            + config.current.flexible.map(\.name)
     }
 
     /// Switch the active arrangement and re-evaluate connected displays.
@@ -56,6 +64,22 @@ final class DisplayManager: ObservableObject {
         if autoAlign, hasConfiguredExternals() {
             align()
         }
+    }
+
+    /// Set the dock owner for the active arrangement. Pass `nil` (or `"builtin"`)
+    /// to revert to the built-in screen. Persists, republishes state, refreshes,
+    /// and re-aligns if `autoAlign` is on.
+    func setDockOwner(_ name: String?) {
+        guard let idx = config.arrangements.firstIndex(where: { $0.name == config.active })
+        else { return }
+        // Normalize: "builtin" and nil are equivalent; we persist as nil.
+        let resolved: String? = (name == nil || name == "builtin") ? nil : name
+        guard config.arrangements[idx].dock_owner != resolved else { return }
+        config.arrangements[idx].dock_owner = resolved
+        config.save()
+        publishArrangementState()
+        refresh()
+        if autoAlign { align() }
     }
 
     func setLaunchAtLogin(_ enabled: Bool) {
@@ -162,17 +186,20 @@ final class DisplayManager: ObservableObject {
     }
 
     private func checkAlignment() {
-        guard let layout = computeLayout() else {
+        guard let resolved = computeLayout() else {
             statusMessage = "Layout computation failed"
             isAligned = false
             return
         }
+        let layout = translateForDockOwner(resolved, owner: config.current.dock_owner)
 
-        // Compare computed layout against actual positions
+        // Compare computed layout against actual positions. Builtin is included
+        // — when it's not the dock owner, its target position is non-zero and
+        // must match what's actually on screen.
         var allAligned = true
-        for resolved in layout where CGDisplayIsBuiltin(resolved.displayID) == 0 {
-            let actual = CGDisplayBounds(resolved.displayID)
-            if Int(actual.origin.x) != resolved.x || Int(actual.origin.y) != resolved.y {
+        for d in layout {
+            let actual = CGDisplayBounds(d.displayID)
+            if Int(actual.origin.x) != d.x || Int(actual.origin.y) != d.y {
                 allAligned = false
                 break
             }
@@ -319,20 +346,48 @@ final class DisplayManager: ObservableObject {
         }
     }
 
+    // MARK: - Dock Owner Translation
+
+    /// Translate a resolved layout so the named owner lands at (0,0).
+    /// Returns the layout unchanged when:
+    ///   - `owner` is nil or "builtin" (default case)
+    ///   - `owner` names a display that isn't in `layout` (silent builtin fallback)
+    private func translateForDockOwner(
+        _ layout: [ResolvedDisplay],
+        owner: String?
+    ) -> [ResolvedDisplay] {
+        let target = owner ?? "builtin"
+        guard target != "builtin",
+              let pivot = layout.first(where: { $0.name == target })
+        else { return layout }
+
+        let dx = pivot.x
+        let dy = pivot.y
+        return layout.map { d in
+            var copy = d
+            copy.x -= dx
+            copy.y -= dy
+            return copy
+        }
+    }
+
     // MARK: - Align
 
     func align() {
-        guard let layout = computeLayout() else {
+        guard let resolved = computeLayout() else {
             statusMessage = "Cannot compute layout"
             return
         }
+        let layout = translateForDockOwner(resolved, owner: config.current.dock_owner)
 
-        // Only move externals (not the builtin)
-        let moves = layout.filter { CGDisplayIsBuiltin($0.displayID) == 0 }
-        guard !moves.isEmpty else {
+        // Move every resolved display — builtin included when it's no longer at origin.
+        // Bail only if there are no externals at all (no point aligning a solo builtin).
+        let hasExternal = layout.contains { CGDisplayIsBuiltin($0.displayID) == 0 }
+        guard hasExternal else {
             statusMessage = "No displays to move"
             return
         }
+        let moves = layout
 
         var cgConfig: CGDisplayConfigRef?
         guard CGBeginDisplayConfiguration(&cgConfig) == .success else {
@@ -484,7 +539,8 @@ final class DisplayManager: ObservableObject {
                 arrangement: canvasDisplays,
                 newDisplay: entry,
                 width: width,
-                height: height
+                height: height,
+                dockOwner: config.current.effectiveDockOwner
             )
             coordinator.onCommit = { [weak self] in
                 self?.config = Config.load()
@@ -518,7 +574,10 @@ final class DisplayManager: ObservableObject {
         }
 
         Task { @MainActor in
-            let coordinator = PlacementCoordinator(arrangement: canvasDisplays)
+            let coordinator = PlacementCoordinator(
+                arrangement: canvasDisplays,
+                dockOwner: config.current.effectiveDockOwner
+            )
             coordinator.onCommit = { [weak self] in
                 self?.config = Config.load()
                 self?.publishArrangementState()
