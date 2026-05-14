@@ -539,7 +539,8 @@ final class DisplayManager: ObservableObject {
                 arrangement: canvasDisplays,
                 newDisplay: entry,
                 width: width,
-                height: height
+                height: height,
+                dockOwner: config.current.effectiveDockOwner
             )
             coordinator.onCommit = { [weak self] in
                 self?.config = Config.load()
@@ -573,7 +574,10 @@ final class DisplayManager: ObservableObject {
         }
 
         Task { @MainActor in
-            let coordinator = PlacementCoordinator(arrangement: canvasDisplays)
+            let coordinator = PlacementCoordinator(
+                arrangement: canvasDisplays,
+                dockOwner: config.current.effectiveDockOwner
+            )
             coordinator.onCommit = { [weak self] in
                 self?.config = Config.load()
                 self?.publishArrangementState()
