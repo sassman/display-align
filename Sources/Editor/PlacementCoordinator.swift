@@ -65,6 +65,9 @@ final class PlacementCoordinator: ObservableObject {
     @Published var phase: PlacementPhase = .idle
     @Published var arrangement: [CanvasDisplay] = []
     @Published var pendingDisplays: [PendingDisplay] = []
+    /// Working dock owner. "builtin" or a `CanvasDisplay.id`. Persisted via
+    /// `commitAllConfigs()`.
+    @Published var workingDockOwner: String = "builtin"
 
     /// Configs with unsaved changes, keyed by canvas display ID. This is the single source
     /// of truth for what gets written on save.
@@ -79,11 +82,13 @@ final class PlacementCoordinator: ObservableObject {
     private var countdownCancellable: AnyCancellable?
     /// Displays that were unchained during this session (vendor, model pairs to remove from config on save).
     private var removedDisplays: [(vendor: UInt32, model: UInt32)] = []
+    /// Initial dock owner captured at session start; used by `canFinalize`.
+    private let initialDockOwner: String
 
     // MARK: Init
 
     /// Init for placing a new display (from unknown-display prompt).
-    init(arrangement: [CanvasDisplay], newDisplay: DisplayEntry, width: Int, height: Int) {
+    init(arrangement: [CanvasDisplay], newDisplay: DisplayEntry, width: Int, height: Int, dockOwner: String = "builtin") {
         self.arrangement = arrangement
         self.pendingDisplays = [
             PendingDisplay(
@@ -95,6 +100,8 @@ final class PlacementCoordinator: ObservableObject {
                 height: height
             )
         ]
+        self.workingDockOwner = dockOwner
+        self.initialDockOwner = dockOwner
 
         // Auto-select the topmost display as anchor
         if let topmost = arrangement.min(by: { $0.y < $1.y }) {
@@ -103,17 +110,28 @@ final class PlacementCoordinator: ObservableObject {
     }
 
     /// Init for editing the current arrangement (opened from menubar).
-    init(arrangement: [CanvasDisplay]) {
+    init(arrangement: [CanvasDisplay], dockOwner: String = "builtin") {
         self.arrangement = arrangement
         self.pendingDisplays = []
         self.phase = .idle
+        self.workingDockOwner = dockOwner
+        self.initialDockOwner = dockOwner
+    }
+
+    // MARK: - Dock Owner
+
+    /// Set the working dock owner. Persists on commit; reverts on cancel.
+    func setDockOwner(_ id: String) {
+        workingDockOwner = id
     }
 
     // MARK: - Computed Properties
 
     /// Whether unsaved changes exist and can be saved.
     var canFinalize: Bool {
-        !committedConfigs.isEmpty || !removedDisplays.isEmpty
+        !committedConfigs.isEmpty
+            || !removedDisplays.isEmpty
+            || workingDockOwner != initialDockOwner
     }
 
     /// The currently active pending display (the one being placed).
