@@ -162,17 +162,20 @@ final class DisplayManager: ObservableObject {
     }
 
     private func checkAlignment() {
-        guard let layout = computeLayout() else {
+        guard let resolved = computeLayout() else {
             statusMessage = "Layout computation failed"
             isAligned = false
             return
         }
+        let layout = translateForDockOwner(resolved, owner: config.current.dock_owner)
 
-        // Compare computed layout against actual positions
+        // Compare computed layout against actual positions. Builtin is included
+        // — when it's not the dock owner, its target position is non-zero and
+        // must match what's actually on screen.
         var allAligned = true
-        for resolved in layout where CGDisplayIsBuiltin(resolved.displayID) == 0 {
-            let actual = CGDisplayBounds(resolved.displayID)
-            if Int(actual.origin.x) != resolved.x || Int(actual.origin.y) != resolved.y {
+        for d in layout {
+            let actual = CGDisplayBounds(d.displayID)
+            if Int(actual.origin.x) != d.x || Int(actual.origin.y) != d.y {
                 allAligned = false
                 break
             }
@@ -347,17 +350,20 @@ final class DisplayManager: ObservableObject {
     // MARK: - Align
 
     func align() {
-        guard let layout = computeLayout() else {
+        guard let resolved = computeLayout() else {
             statusMessage = "Cannot compute layout"
             return
         }
+        let layout = translateForDockOwner(resolved, owner: config.current.dock_owner)
 
-        // Only move externals (not the builtin)
-        let moves = layout.filter { CGDisplayIsBuiltin($0.displayID) == 0 }
-        guard !moves.isEmpty else {
+        // Move every resolved display — builtin included when it's no longer at origin.
+        // Bail only if there are no externals at all (no point aligning a solo builtin).
+        let hasExternal = layout.contains { CGDisplayIsBuiltin($0.displayID) == 0 }
+        guard hasExternal else {
             statusMessage = "No displays to move"
             return
         }
+        let moves = layout
 
         var cgConfig: CGDisplayConfigRef?
         guard CGBeginDisplayConfiguration(&cgConfig) == .success else {
