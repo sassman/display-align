@@ -319,6 +319,31 @@ final class DisplayManager: ObservableObject {
         }
     }
 
+    // MARK: - Dock Owner Translation
+
+    /// Translate a resolved layout so the named owner lands at (0,0).
+    /// Returns the layout unchanged when:
+    ///   - `owner` is nil or "builtin" (default case)
+    ///   - `owner` names a display that isn't in `layout` (silent builtin fallback)
+    private func translateForDockOwner(
+        _ layout: [ResolvedDisplay],
+        owner: String?
+    ) -> [ResolvedDisplay] {
+        let target = owner ?? "builtin"
+        guard target != "builtin",
+              let pivot = layout.first(where: { $0.name == target })
+        else { return layout }
+
+        let dx = pivot.x
+        let dy = pivot.y
+        return layout.map { d in
+            var copy = d
+            copy.x -= dx
+            copy.y -= dy
+            return copy
+        }
+    }
+
     // MARK: - Align
 
     func align() {
