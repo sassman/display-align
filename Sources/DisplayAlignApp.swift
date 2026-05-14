@@ -53,6 +53,24 @@ struct DisplayAlignApp: App {
                 Text("Active Arrangement: \(manager.activeArrangement)")
             }
 
+            if manager.dockOwnerCandidates.count > 1 {
+                Menu("Dock Owner: \(manager.dockOwner)") {
+                    ForEach(manager.dockOwnerCandidates, id: \.self) { name in
+                        Button {
+                            manager.setDockOwner(name == "builtin" ? nil : name)
+                        } label: {
+                            if name == manager.dockOwner {
+                                Label(name, systemImage: "checkmark")
+                            } else {
+                                Text(name)
+                            }
+                        }
+                    }
+                }
+            } else {
+                Text("Dock Owner: \(manager.dockOwner)")
+            }
+
             Divider()
 
             Button("Open Config...") {
