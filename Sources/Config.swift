@@ -38,6 +38,7 @@ struct Arrangement: Codable, Equatable, Identifiable {
     let name: String
     var stacked: [DisplayEntry]
     var flexible: [FlexibleDisplay]
+    var dock_owner: String?
 
     var id: String { name }
 
@@ -47,14 +48,15 @@ struct Arrangement: Codable, Equatable, Identifiable {
         Arrangement(name: name, stacked: [], flexible: [])
     }
 
-    init(name: String, stacked: [DisplayEntry] = [], flexible: [FlexibleDisplay] = []) {
+    init(name: String, stacked: [DisplayEntry] = [], flexible: [FlexibleDisplay] = [], dock_owner: String? = nil) {
         self.name = name
         self.stacked = stacked
         self.flexible = flexible
+        self.dock_owner = dock_owner
     }
 
     private enum CodingKeys: String, CodingKey {
-        case name, stacked, flexible
+        case name, stacked, flexible, dock_owner
     }
 
     /// Tolerant decode: hand-edited configs frequently omit `stacked` or
@@ -66,7 +68,19 @@ struct Arrangement: Codable, Equatable, Identifiable {
         name = try c.decode(String.self, forKey: .name)
         stacked = try c.decodeIfPresent([DisplayEntry].self, forKey: .stacked) ?? []
         flexible = try c.decodeIfPresent([FlexibleDisplay].self, forKey: .flexible) ?? []
+        dock_owner = try c.decodeIfPresent(String.self, forKey: .dock_owner)
     }
+
+    func encode(to encoder: Encoder) throws {
+        var c = encoder.container(keyedBy: CodingKeys.self)
+        try c.encode(name, forKey: .name)
+        try c.encode(stacked, forKey: .stacked)
+        try c.encode(flexible, forKey: .flexible)
+        try c.encodeIfPresent(dock_owner, forKey: .dock_owner)
+    }
+
+    /// Effective dock owner name. "builtin" if unset or explicitly set to "builtin".
+    var effectiveDockOwner: String { dock_owner ?? "builtin" }
 }
 
 struct Config: Codable, Equatable {
