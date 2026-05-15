@@ -15,7 +15,11 @@ permissions:
   contents: write
 
 jobs:
+  checks:
+    uses: ./.github/workflows/ci.yml
+
   build:
+    needs: checks
     runs-on: macos-14
     outputs:
       sha256: ${{ steps.sign.outputs.sha256 }}

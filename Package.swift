@@ -12,5 +12,10 @@ let package = Package(
                 .linkedFramework("IOKit"),
             ]
         ),
+        .testTarget(
+            name: "DisplayAlignTests",
+            dependencies: ["DisplayAlign"],
+            path: "Tests/DisplayAlignTests"
+        ),
     ]
 )
