@@ -82,14 +82,14 @@ final class PlacementWindow: NSPanel {
         guard let coordinator = coordinator else { return }
 
         switch event.keyCode {
-        case 53: // Esc
+        case 53:  // Esc
             if case .previewing = coordinator.phase {
                 coordinator.interceptCountdown()
             } else {
                 coordinator.revertPhysicalPreview()
                 PlacementWindow.dismiss()
             }
-        case 36: // Return/Enter
+        case 36:  // Return/Enter
             if case .placed = coordinator.phase {
                 coordinator.confirmPlacement()
             }

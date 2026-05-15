@@ -1,6 +1,6 @@
-import Foundation
-import CoreGraphics
 import AppKit
+import CoreGraphics
+import Foundation
 import ServiceManagement
 
 /// Resolved rectangle for a display during layout computation.
@@ -49,7 +49,8 @@ final class DisplayManager: ObservableObject {
         arrangementNames = config.arrangements.map(\.name)
         activeArrangement = config.active
         dockOwner = config.current.effectiveDockOwner
-        dockOwnerCandidates = ["builtin"]
+        dockOwnerCandidates =
+            ["builtin"]
             + config.current.stacked.map(\.name)
             + config.current.flexible.map(\.name)
     }
@@ -94,7 +95,8 @@ final class DisplayManager: ObservableObject {
             launchAtLogin = SMAppService.mainApp.status == .enabled
             let alert = NSAlert()
             alert.alertStyle = .informational
-            alert.messageText = enabled
+            alert.messageText =
+                enabled
                 ? "Could not enable Start at Login"
                 : "Could not disable Start at Login"
             alert.informativeText = error.localizedDescription
@@ -115,7 +117,7 @@ final class DisplayManager: ObservableObject {
 
     func identifyDisplay(_ displayID: CGDirectDisplayID) -> String {
         let vendor = CGDisplayVendorNumber(displayID)
-        let model  = CGDisplayModelNumber(displayID)
+        let model = CGDisplayModelNumber(displayID)
 
         // Check all config lists
         if let entry = config.current.stacked.first(where: { $0.vendor == vendor && $0.model == model }) {
@@ -232,11 +234,13 @@ final class DisplayManager: ObservableObject {
 
         // Resolve stacked displays: centered above builtin
         for entry in config.current.stacked {
-            guard let id = displays.first(where: {
-                CGDisplayIsBuiltin($0) == 0
-                && CGDisplayVendorNumber($0) == entry.vendor
-                && CGDisplayModelNumber($0) == entry.model
-            }) else { continue }
+            guard
+                let id = displays.first(where: {
+                    CGDisplayIsBuiltin($0) == 0
+                        && CGDisplayVendorNumber($0) == entry.vendor
+                        && CGDisplayModelNumber($0) == entry.model
+                })
+            else { continue }
 
             let bounds = CGDisplayBounds(id)
             let w = Int(bounds.width)
@@ -251,8 +255,8 @@ final class DisplayManager: ObservableObject {
         var pending = config.current.flexible.filter { flex in
             displays.contains(where: {
                 CGDisplayIsBuiltin($0) == 0
-                && CGDisplayVendorNumber($0) == flex.vendor
-                && CGDisplayModelNumber($0) == flex.model
+                    && CGDisplayVendorNumber($0) == flex.vendor
+                    && CGDisplayModelNumber($0) == flex.model
             })
         }
 
@@ -269,11 +273,13 @@ final class DisplayManager: ObservableObject {
                     continue
                 }
 
-                guard let id = displays.first(where: {
-                    CGDisplayIsBuiltin($0) == 0
-                    && CGDisplayVendorNumber($0) == flex.vendor
-                    && CGDisplayModelNumber($0) == flex.model
-                }) else { continue }
+                guard
+                    let id = displays.first(where: {
+                        CGDisplayIsBuiltin($0) == 0
+                            && CGDisplayVendorNumber($0) == flex.vendor
+                            && CGDisplayModelNumber($0) == flex.model
+                    })
+                else { continue }
 
                 let bounds = CGDisplayBounds(id)
                 let w = Int(bounds.width)
@@ -358,7 +364,7 @@ final class DisplayManager: ObservableObject {
     ) -> [ResolvedDisplay] {
         let target = owner ?? "builtin"
         guard target != "builtin",
-              let pivot = layout.first(where: { $0.name == target })
+            let pivot = layout.first(where: { $0.name == target })
         else { return layout }
 
         let dx = pivot.x
@@ -430,17 +436,17 @@ final class DisplayManager: ObservableObject {
             if let arrName = knownArrangement {
                 alert.messageText = "Already-Known Display Detected"
                 alert.informativeText = """
-                "\(name)" (vendor:\(vendor), model:\(model)) is already in the "\(arrName)" arrangement, but the active one is "\(self.activeArrangement)".
+                    "\(name)" (vendor:\(vendor), model:\(model)) is already in the "\(arrName)" arrangement, but the active one is "\(self.activeArrangement)".
 
-                Activate "\(arrName)", stack it above the built-in, customize placement, or ignore?
-                """
+                    Activate "\(arrName)", stack it above the built-in, customize placement, or ignore?
+                    """
             } else {
                 alert.messageText = "Unknown Display Detected"
                 alert.informativeText = """
-                "\(name)" (vendor:\(vendor), model:\(model)) is not in any arrangement.
+                    "\(name)" (vendor:\(vendor), model:\(model)) is not in any arrangement.
 
-                Stack it above the built-in, customize placement, or ignore?
-                """
+                    Stack it above the built-in, customize placement, or ignore?
+                    """
             }
             alert.alertStyle = .informational
 
@@ -473,11 +479,14 @@ final class DisplayManager: ObservableObject {
             // Map the response onto the available actions. Indices shift
             // depending on whether the activate option was added.
             // Button order: [Activate?] Stack Above | Custom Arrange | Ignore
-            let activateResponse: NSApplication.ModalResponse? = knownArrangement == nil
+            let activateResponse: NSApplication.ModalResponse? =
+                knownArrangement == nil
                 ? nil : .alertFirstButtonReturn
-            let stackResponse: NSApplication.ModalResponse = knownArrangement == nil
+            let stackResponse: NSApplication.ModalResponse =
+                knownArrangement == nil
                 ? .alertFirstButtonReturn : .alertSecondButtonReturn
-            let customResponse: NSApplication.ModalResponse = knownArrangement == nil
+            let customResponse: NSApplication.ModalResponse =
+                knownArrangement == nil
                 ? .alertSecondButtonReturn : .alertThirdButtonReturn
 
             switch response {
@@ -528,8 +537,8 @@ final class DisplayManager: ObservableObject {
         // Get new display's dimensions
         let newDisplayID = displays.first {
             CGDisplayIsBuiltin($0) == 0
-            && CGDisplayVendorNumber($0) == entry.vendor
-            && CGDisplayModelNumber($0) == entry.model
+                && CGDisplayVendorNumber($0) == entry.vendor
+                && CGDisplayModelNumber($0) == entry.model
         }
         let width = newDisplayID.map { Int(CGDisplayPixelsWide($0)) } ?? 1920
         let height = newDisplayID.map { Int(CGDisplayPixelsHigh($0)) } ?? 1080

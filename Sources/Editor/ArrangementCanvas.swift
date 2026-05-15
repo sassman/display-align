@@ -29,7 +29,8 @@ struct ArrangementCanvas: View {
 
                 // Direction indicators (only when there are pending displays to place)
                 if case .anchorSelected(let anchorId) = coordinator.phase,
-                   !coordinator.pendingDisplays.isEmpty {
+                    !coordinator.pendingDisplays.isEmpty
+                {
                     DirectionIndicators(coordinator: coordinator, anchorId: anchorId, layout: layout)
                 }
 
@@ -91,7 +92,7 @@ struct ArrangementCanvas: View {
     /// Returns the placed display's position in real pixels (before scaling), or nil if not placed.
     private func computePlacedBounds() -> (x: Int, y: Int, w: Int, h: Int)? {
         guard let config = currentConfig,
-              let anchor = coordinator.arrangement.first(where: { $0.id == config.anchorName })
+            let anchor = coordinator.arrangement.first(where: { $0.id == config.anchorName })
         else { return nil }
 
         let w = coordinator.effectiveNewWidth
@@ -196,7 +197,8 @@ struct ArrangementCanvas: View {
                 DragGesture()
                     .onChanged { value in
                         guard case .finetuning(let config, let editId) = coordinator.phase,
-                              editId == display.id else { return }
+                            editId == display.id
+                        else { return }
                         let isVerticalDrag = (config.position == .left || config.position == .right)
                         let delta: CGFloat = isVerticalDrag ? value.translation.height : value.translation.width
                         let pixelDelta = Int(delta / layout.scale)
@@ -209,7 +211,9 @@ struct ArrangementCanvas: View {
                     }
             )
             .position(x: rect.midX, y: rect.midY)
-            .shadow(color: shadowColor(isSelected: isSelected, isDockOwner: isDockOwner, ownerHue: ownerHue), radius: 10)
+            .shadow(
+                color: shadowColor(isSelected: isSelected, isDockOwner: isDockOwner, ownerHue: ownerHue), radius: 10
+            )
             .onChange(of: isBeingFinetuned) { _, finetuning in
                 if finetuning { dragStartOffset = coordinator.currentOffset }
             }
@@ -276,7 +280,7 @@ struct ArrangementCanvas: View {
 
     private func computePlacedRect(layout: ScaledLayout) -> CGRect? {
         guard let config = currentConfig,
-              let anchor = coordinator.arrangement.first(where: { $0.id == config.anchorName })
+            let anchor = coordinator.arrangement.first(where: { $0.id == config.anchorName })
         else { return nil }
 
         let w = coordinator.effectiveNewWidth
@@ -347,16 +351,18 @@ struct ArrangementCanvas: View {
         let pairs = coordinator.adjacentPairs()
         ForEach(Array(pairs.enumerated()), id: \.offset) { _, pair in
             if let point = computeExistingChainPoint(pair: pair, layout: layout) {
-                chainButton(at: point, action: {
-                    coordinator.unchainExistingDisplay(pair.displayB)
-                })
+                chainButton(
+                    at: point,
+                    action: {
+                        coordinator.unchainExistingDisplay(pair.displayB)
+                    })
             }
         }
     }
 
     private func computeExistingChainPoint(pair: PlacementCoordinator.AdjacentPair, layout: ScaledLayout) -> CGPoint? {
         guard let displayA = coordinator.arrangement.first(where: { $0.id == pair.displayA }),
-              let displayB = coordinator.arrangement.first(where: { $0.id == pair.displayB })
+            let displayB = coordinator.arrangement.first(where: { $0.id == pair.displayB })
         else { return nil }
 
         let rectA = scaledRect(for: displayA, layout: layout)
@@ -394,8 +400,8 @@ struct ArrangementCanvas: View {
     // Chain point for the placed display ↔ anchor
     private func computeChainPoint(layout: ScaledLayout) -> CGPoint? {
         guard let config = currentConfig,
-              let anchor = coordinator.arrangement.first(where: { $0.id == config.anchorName }),
-              let placedRect = computePlacedRect(layout: layout)
+            let anchor = coordinator.arrangement.first(where: { $0.id == config.anchorName }),
+            let placedRect = computePlacedRect(layout: layout)
         else { return nil }
 
         let anchorRect = scaledRect(for: anchor, layout: layout)

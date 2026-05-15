@@ -46,7 +46,7 @@ struct DirectionIndicators: View {
         switch edge {
         case .above: return CGPoint(x: rect.midX, y: rect.minY - 24)
         case .below: return CGPoint(x: rect.midX, y: rect.maxY + 24)
-        case .left:  return CGPoint(x: rect.minX - 24, y: rect.midY)
+        case .left: return CGPoint(x: rect.minX - 24, y: rect.midY)
         case .right: return CGPoint(x: rect.maxX + 24, y: rect.midY)
         }
     }
@@ -55,7 +55,7 @@ struct DirectionIndicators: View {
         switch edge {
         case .above: return "↑"
         case .below: return "↓"
-        case .left:  return "←"
+        case .left: return "←"
         case .right: return "→"
         }
     }
