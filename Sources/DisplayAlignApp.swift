@@ -28,10 +28,12 @@ struct DisplayAlignApp: App {
 
             Toggle("Auto-align on connect", isOn: $manager.autoAlign)
 
-            Toggle("Start at Login", isOn: Binding(
-                get: { manager.launchAtLogin },
-                set: { manager.setLaunchAtLogin($0) }
-            ))
+            Toggle(
+                "Start at Login",
+                isOn: Binding(
+                    get: { manager.launchAtLogin },
+                    set: { manager.setLaunchAtLogin($0) }
+                ))
 
             Divider()
 
@@ -92,9 +94,11 @@ struct DisplayAlignApp: App {
             }
 
             Button("Missing a feature?") {
-                NSWorkspace.shared.open(URL(
-                    string: "https://github.com/sassman/display-align/issues/new?labels=enhancement&title=Feature%20request%3A%20"
-                )!)
+                NSWorkspace.shared.open(
+                    URL(
+                        string:
+                            "https://github.com/sassman/display-align/issues/new?labels=enhancement&title=Feature%20request%3A%20"
+                    )!)
             }
 
             Divider()

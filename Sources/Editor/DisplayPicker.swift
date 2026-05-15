@@ -96,7 +96,7 @@ struct DisplayPicker: View {
         switch position {
         case .above: return CGPoint(x: rect.midX, y: rect.minY - 60)
         case .below: return CGPoint(x: rect.midX, y: rect.maxY + 60)
-        case .left:  return CGPoint(x: rect.minX - 100, y: rect.midY)
+        case .left: return CGPoint(x: rect.minX - 100, y: rect.midY)
         case .right: return CGPoint(x: rect.maxX + 100, y: rect.midY)
         }
     }

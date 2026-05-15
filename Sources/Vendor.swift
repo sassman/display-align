@@ -1,6 +1,6 @@
-import Foundation
 import AppKit
 import CoreGraphics
+import Foundation
 
 /// Resolve a `CGDisplayVendorNumber` to a human-readable manufacturer name.
 ///
@@ -20,14 +20,14 @@ enum Vendor {
     /// MSI, NEC) aren't listed — `name(for:)` returns the decoded PnP code
     /// directly when no override is found.
     private static let pnpVendors: [String: String] = [
-        "ACI": "ASUS",        // Asustek Computer Inc
+        "ACI": "ASUS",  // Asustek Computer Inc
         "ACR": "Acer",
         "APP": "Apple",
         "BNQ": "BenQ",
-        "CMN": "Innolux",     // Chimei Innolux — laptop panels
+        "CMN": "Innolux",  // Chimei Innolux — laptop panels
         "DEL": "Dell",
         "ENC": "Eizo",
-        "GSM": "LG",          // GoldStar Mfg, LG's monitor PnP code
+        "GSM": "LG",  // GoldStar Mfg, LG's monitor PnP code
         "HWP": "HP",
         "IVM": "Iiyama",
         "LEN": "Lenovo",
@@ -35,7 +35,7 @@ enum Vendor {
         "LGE": "LG",
         "PHL": "Philips",
         "SAM": "Samsung",
-        "SDC": "Samsung",     // Samsung Display Co — panel maker
+        "SDC": "Samsung",  // Samsung Display Co — panel maker
         "SHP": "Sharp",
         "SNY": "Sony",
         "TSB": "Toshiba",
@@ -56,9 +56,9 @@ enum Vendor {
         let c1 = Int((vendor >> 10) & 0x1F)
         let c2 = Int((vendor >> 5) & 0x1F)
         let c3 = Int(vendor & 0x1F)
-        guard (1 ... 26).contains(c1),
-              (1 ... 26).contains(c2),
-              (1 ... 26).contains(c3)
+        guard (1...26).contains(c1),
+            (1...26).contains(c2),
+            (1...26).contains(c3)
         else { return nil }
         let scalars = [c1, c2, c3].compactMap { UnicodeScalar(64 + $0) }
         guard scalars.count == 3 else { return nil }

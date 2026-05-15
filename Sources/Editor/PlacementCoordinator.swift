@@ -1,14 +1,14 @@
-import Foundation
+import AppKit
 import Combine
 import CoreGraphics
-import AppKit
+import Foundation
 import SwiftUI
 
 // MARK: - CanvasDisplay
 
 /// Represents a resolved display rectangle for rendering on the editor canvas.
 struct CanvasDisplay: Identifiable, Equatable {
-    let id: String          // "builtin" or display name
+    let id: String  // "builtin" or display name
     let displayID: CGDirectDisplayID
     let name: String
     let x: Int
@@ -34,12 +34,12 @@ struct PendingDisplay: Identifiable, Equatable {
 
 /// Working placement state describing how a new display is positioned relative to an anchor.
 struct PlacementConfig: Equatable {
-    var anchorName: String              // relative_to value ("builtin" or display name)
+    var anchorName: String  // relative_to value ("builtin" or display name)
     var position: FlexibleDisplay.Position
     var align: FlexibleDisplay.Alignment
     var offset: Int
-    var rotation: Int                   // 0, 90, or 270
-    var pendingId: String               // vendor-model identifier for config save
+    var rotation: Int  // 0, 90, or 270
+    var pendingId: String  // vendor-model identifier for config save
 }
 
 // MARK: - PlacementPhase
@@ -50,7 +50,7 @@ enum PlacementPhase: Equatable {
     case anchorSelected(String)
     case pickingDisplay(String, FlexibleDisplay.Position)  // anchorId, position
     case placed(PlacementConfig)
-    case finetuning(PlacementConfig, displayId: String)    // editing a display in-place
+    case finetuning(PlacementConfig, displayId: String)  // editing a display in-place
     case previewing(PlacementConfig, secondsLeft: Int)
 }
 
@@ -88,7 +88,8 @@ final class PlacementCoordinator: ObservableObject {
     // MARK: Init
 
     /// Init for placing a new display (from unknown-display prompt).
-    init(arrangement: [CanvasDisplay], newDisplay: DisplayEntry, width: Int, height: Int, dockOwner: String = "builtin") {
+    init(arrangement: [CanvasDisplay], newDisplay: DisplayEntry, width: Int, height: Int, dockOwner: String = "builtin")
+    {
         self.arrangement = arrangement
         self.pendingDisplays = [
             PendingDisplay(
@@ -315,7 +316,7 @@ final class PlacementCoordinator: ObservableObject {
     /// Cascades to any displays that use this one as their anchor.
     private func updateDisplayPosition(config: PlacementConfig, displayId: String) {
         guard let idx = arrangement.firstIndex(where: { $0.id == displayId }),
-              let anchor = arrangement.first(where: { $0.id == config.anchorName })
+            let anchor = arrangement.first(where: { $0.id == config.anchorName })
         else { return }
 
         let display = arrangement[idx]
@@ -363,7 +364,8 @@ final class PlacementCoordinator: ObservableObject {
 
             // Find config for this dependent — either pre-populated or reconstruct now
             guard let depConfig = committedConfigs[dep.id],
-                  depConfig.anchorName == anchorId else { continue }
+                depConfig.anchorName == anchorId
+            else { continue }
 
             let w = dep.width
             let h = dep.height
@@ -419,7 +421,8 @@ final class PlacementCoordinator: ObservableObject {
     /// Unchain an existing display from the arrangement: remove it and add to pending.
     func unchainExistingDisplay(_ displayId: String) {
         guard let display = arrangement.first(where: { $0.id == displayId }),
-              !display.isBuiltin else { return }
+            !display.isBuiltin
+        else { return }
 
         let vendor = CGDisplayVendorNumber(display.displayID)
         let model = CGDisplayModelNumber(display.displayID)
@@ -428,14 +431,15 @@ final class PlacementCoordinator: ObservableObject {
             arrangement.removeAll { $0.id == displayId }
             committedConfigs.removeValue(forKey: displayId)
             removedDisplays.append((vendor: vendor, model: model))
-            pendingDisplays.append(PendingDisplay(
-                id: "\(vendor)-\(model)",
-                name: display.name,
-                vendor: vendor,
-                model: model,
-                width: display.width,
-                height: display.height
-            ))
+            pendingDisplays.append(
+                PendingDisplay(
+                    id: "\(vendor)-\(model)",
+                    name: display.name,
+                    vendor: vendor,
+                    model: model,
+                    width: display.width,
+                    height: display.height
+                ))
 
             // Auto-select if only one display remains
             if arrangement.count == 1, let sole = arrangement.first {
@@ -452,9 +456,9 @@ final class PlacementCoordinator: ObservableObject {
     func cycleRotation() {
         guard case .placed(var config) = phase else { return }
         switch config.rotation {
-        case 0:   config.rotation = 90
-        case 90:  config.rotation = 270
-        default:  config.rotation = 0
+        case 0: config.rotation = 90
+        case 90: config.rotation = 270
+        default: config.rotation = 0
         }
         phase = .placed(config)
     }
@@ -462,7 +466,8 @@ final class PlacementCoordinator: ObservableObject {
     /// Enter fine-tune mode for a display.
     func editDisplay(_ displayId: String) {
         guard let display = arrangement.first(where: { $0.id == displayId }),
-              !display.isBuiltin else { return }
+            !display.isBuiltin
+        else { return }
 
         // If already fine-tuning another display, commit that config first
         if case .finetuning(let prevConfig, let prevId) = phase {
@@ -611,10 +616,15 @@ final class PlacementCoordinator: ObservableObject {
                 guard !seen.contains(canonical) else { continue }
 
                 var edge: FlexibleDisplay.Position?
-                if touchesAbove(anchor: a, other: b) { edge = .above }
-                else if touchesBelow(anchor: a, other: b) { edge = .below }
-                else if touchesLeft(anchor: a, other: b) { edge = .left }
-                else if touchesRight(anchor: a, other: b) { edge = .right }
+                if touchesAbove(anchor: a, other: b) {
+                    edge = .above
+                } else if touchesBelow(anchor: a, other: b) {
+                    edge = .below
+                } else if touchesLeft(anchor: a, other: b) {
+                    edge = .left
+                } else if touchesRight(anchor: a, other: b) {
+                    edge = .right
+                }
 
                 guard let foundEdge = edge else { continue }
                 seen.insert(canonical)
@@ -654,7 +664,8 @@ final class PlacementCoordinator: ObservableObject {
             guard let currentDisplay = arrangement.first(where: { $0.id == current }) else { continue }
 
             for neighbor in arrangement where neighbor.id != current && depths[neighbor.id] == nil {
-                let adjacent = touchesAbove(anchor: currentDisplay, other: neighbor)
+                let adjacent =
+                    touchesAbove(anchor: currentDisplay, other: neighbor)
                     || touchesBelow(anchor: currentDisplay, other: neighbor)
                     || touchesLeft(anchor: currentDisplay, other: neighbor)
                     || touchesRight(anchor: currentDisplay, other: neighbor)
@@ -713,7 +724,9 @@ final class PlacementCoordinator: ObservableObject {
         return nil
     }
 
-    private func inferHorizontalAlignment(display: CanvasDisplay, anchor: CanvasDisplay) -> (FlexibleDisplay.Alignment, Int) {
+    private func inferHorizontalAlignment(display: CanvasDisplay, anchor: CanvasDisplay) -> (
+        FlexibleDisplay.Alignment, Int
+    ) {
         let centerX = anchor.x + (anchor.width - display.width) / 2
         let leftX = anchor.x
         let rightX = anchor.x + anchor.width - display.width
@@ -735,7 +748,9 @@ final class PlacementCoordinator: ObservableObject {
         }
     }
 
-    private func inferVerticalAlignment(display: CanvasDisplay, anchor: CanvasDisplay) -> (FlexibleDisplay.Alignment, Int) {
+    private func inferVerticalAlignment(display: CanvasDisplay, anchor: CanvasDisplay) -> (
+        FlexibleDisplay.Alignment, Int
+    ) {
         let centerY = anchor.y + (anchor.height - display.height) / 2
         let topY = anchor.y
         let bottomY = anchor.y + anchor.height - display.height
@@ -843,7 +858,8 @@ final class PlacementCoordinator: ObservableObject {
 
         for (displayId, _) in committedConfigs {
             guard let display = arrangement.first(where: { $0.id == displayId }),
-                  display.displayID != 0 else { continue }
+                display.displayID != 0
+            else { continue }
             CGConfigureDisplayOrigin(cgConfig, display.displayID, Int32(display.x), Int32(display.y))
         }
 
@@ -939,7 +955,8 @@ final class PlacementCoordinator: ObservableObject {
             }
 
             // Stacked = above + builtin + center + offset 0
-            let isStacked = config.position == .above
+            let isStacked =
+                config.position == .above
                 && config.anchorName == "builtin"
                 && config.align == .center
                 && config.offset == 0
