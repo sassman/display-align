@@ -842,7 +842,8 @@ final class PlacementCoordinator: ObservableObject {
 
     // MARK: - Physical Preview (CG Display Configuration)
 
-    /// Saves current positions, then moves all changed displays to their computed origins.
+    /// Saves current positions, then moves all displays to their computed origins,
+    /// translated so the working dock owner lands at (0,0) — mirroring `DisplayManager.align()`.
     private func applyPhysicalPreview() {
         savedPositions = []
         var ids = [CGDirectDisplayID](repeating: 0, count: 8)
@@ -853,14 +854,25 @@ final class PlacementCoordinator: ObservableObject {
             savedPositions.append((ids[i], Int32(bounds.origin.x), Int32(bounds.origin.y)))
         }
 
+        let (dx, dy): (Int, Int)
+        if workingDockOwner != "builtin",
+            let pivot = arrangement.first(where: { $0.id == workingDockOwner })
+        {
+            (dx, dy) = (pivot.x, pivot.y)
+        } else {
+            (dx, dy) = (0, 0)
+        }
+
         var cgConfig: CGDisplayConfigRef?
         guard CGBeginDisplayConfiguration(&cgConfig) == .success else { return }
 
-        for (displayId, _) in committedConfigs {
-            guard let display = arrangement.first(where: { $0.id == displayId }),
-                display.displayID != 0
-            else { continue }
-            CGConfigureDisplayOrigin(cgConfig, display.displayID, Int32(display.x), Int32(display.y))
+        for display in arrangement where display.displayID != 0 {
+            CGConfigureDisplayOrigin(
+                cgConfig,
+                display.displayID,
+                Int32(display.x - dx),
+                Int32(display.y - dy)
+            )
         }
 
         CGCompleteDisplayConfiguration(cgConfig, .forSession)
