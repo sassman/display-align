@@ -1000,6 +1000,11 @@ final class PlacementCoordinator: ObservableObject {
         cfg.arrangements[arrIdx].dock_owner =
             workingDockOwner == "builtin" ? nil : workingDockOwner
 
+        // Snapshot the live resolution of every active display so activating
+        // this arrangement restores them. Absent ⇒ leave alone (see model).
+        let captured = captureCurrentResolutions()
+        cfg.arrangements[arrIdx].resolutions = captured.isEmpty ? nil : captured
+
         cfg.save()
         phase = .idle
         onCommit?()
@@ -1023,6 +1028,15 @@ final class PlacementCoordinator: ObservableObject {
             }
         }
         return nil
+    }
+
+    /// Snapshot the current display mode of every active display (built-in
+    /// included) into `DisplayResolution` values keyed by (vendor, model).
+    /// Reuses the file-scope `activeDisplays()` + `currentResolution(for:)`
+    /// helpers (defined in DisplayManager.swift) so the snapshot definition is
+    /// single-sourced, then dedupes identical monitors on (vendor, model).
+    private func captureCurrentResolutions() -> [DisplayResolution] {
+        dedupedResolutions(activeDisplays().compactMap { currentResolution(for: $0) })
     }
 
 }

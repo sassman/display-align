@@ -30,6 +30,40 @@ struct FlexibleDisplay: Codable, Equatable {
     var effectiveOffset: Int { offset ?? 0 }
 }
 
+/// A captured display mode for one display, keyed by (vendor, model).
+///
+/// Stores full fidelity so a mode can be re-selected on another boot:
+/// the scaled "looks like" point size (`width`/`height`), the native
+/// pixel dimensions (`pixelWidth`/`pixelHeight`), and the refresh rate.
+/// Keyed uniformly by (vendor, model) for both the built-in and external
+/// displays.
+struct DisplayResolution: Codable, Equatable {
+    let vendor: UInt32
+    let model: UInt32
+    let width: Int  // scaled ("looks like") point size
+    let height: Int
+    let pixelWidth: Int  // native pixels
+    let pixelHeight: Int
+    let refreshHz: Double
+}
+
+/// Collapse resolutions that share a (vendor, model) key to a single entry
+/// (first seen wins). Identical monitors report the same (vendor, model), so
+/// only one stored mode is meaningful and both get driven to it — see
+/// `Arrangement.resolution(vendor:model:)`. Both capture paths dedupe on this
+/// key so the array never carries unreachable duplicate-keyed entries.
+func dedupedResolutions(_ resolutions: [DisplayResolution]) -> [DisplayResolution] {
+    var seen = Set<UInt64>()
+    var result: [DisplayResolution] = []
+    for r in resolutions {
+        let key = (UInt64(r.vendor) << 32) | UInt64(r.model)
+        if seen.insert(key).inserted {
+            result.append(r)
+        }
+    }
+    return result
+}
+
 /// A named layout: which displays are stacked above the built-in screen and
 /// which ones use relative positioning. `ignored` is intentionally **not**
 /// part of an arrangement — it's a global "leave-alone" set that doesn't
@@ -39,6 +73,10 @@ struct Arrangement: Codable, Equatable, Identifiable {
     var stacked: [DisplayEntry]
     var flexible: [FlexibleDisplay]
     var dock_owner: String?
+    /// Per-display captured resolutions. `nil` (or an absent entry for a
+    /// given display) means "leave that display's resolution alone" on
+    /// activate — mirrors the optional `dock_owner` semantics.
+    var resolutions: [DisplayResolution]?
 
     var id: String { name }
 
@@ -48,15 +86,22 @@ struct Arrangement: Codable, Equatable, Identifiable {
         Arrangement(name: name, stacked: [], flexible: [])
     }
 
-    init(name: String, stacked: [DisplayEntry] = [], flexible: [FlexibleDisplay] = [], dock_owner: String? = nil) {
+    init(
+        name: String,
+        stacked: [DisplayEntry] = [],
+        flexible: [FlexibleDisplay] = [],
+        dock_owner: String? = nil,
+        resolutions: [DisplayResolution]? = nil
+    ) {
         self.name = name
         self.stacked = stacked
         self.flexible = flexible
         self.dock_owner = dock_owner
+        self.resolutions = resolutions
     }
 
     private enum CodingKeys: String, CodingKey {
-        case name, stacked, flexible, dock_owner
+        case name, stacked, flexible, dock_owner, resolutions
     }
 
     /// Tolerant decode: hand-edited configs frequently omit `stacked` or
@@ -69,6 +114,7 @@ struct Arrangement: Codable, Equatable, Identifiable {
         stacked = try c.decodeIfPresent([DisplayEntry].self, forKey: .stacked) ?? []
         flexible = try c.decodeIfPresent([FlexibleDisplay].self, forKey: .flexible) ?? []
         dock_owner = try c.decodeIfPresent(String.self, forKey: .dock_owner)
+        resolutions = try c.decodeIfPresent([DisplayResolution].self, forKey: .resolutions)
     }
 
     func encode(to encoder: Encoder) throws {
@@ -77,10 +123,23 @@ struct Arrangement: Codable, Equatable, Identifiable {
         try c.encode(stacked, forKey: .stacked)
         try c.encode(flexible, forKey: .flexible)
         try c.encodeIfPresent(dock_owner, forKey: .dock_owner)
+        try c.encodeIfPresent(resolutions, forKey: .resolutions)
     }
 
     /// Effective dock owner name. "builtin" if unset or explicitly set to "builtin".
     var effectiveDockOwner: String { dock_owner ?? "builtin" }
+
+    /// The stored resolution for a display keyed by (vendor, model), or `nil`
+    /// when none was captured — in which case that display is left untouched.
+    ///
+    /// Resolutions are keyed by (vendor, model): two identical monitors (same
+    /// vendor + model) collapse to a single stored mode and both are driven to
+    /// it — the same keying limitation as stacked/flexible entries. Capture
+    /// dedupes on this key (see `dedupedResolutions`), so `.first` is
+    /// authoritative here.
+    func resolution(vendor: UInt32, model: UInt32) -> DisplayResolution? {
+        resolutions?.first { $0.vendor == vendor && $0.model == model }
+    }
 }
 
 struct Config: Codable, Equatable {
