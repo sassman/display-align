@@ -154,7 +154,7 @@ final class BestMatchModeTests: XCTestCase {
         // Nothing is reasonably close (pixel delta 2000 ≫ 15% budget), so the
         // matcher declines rather than forcing a wildly different mode.
         let modes = [
-            DisplayModeCandidate(width: 1280, height: 720, pixelWidth: 2560, pixelHeight: 1440, refreshHz: 60),
+            DisplayModeCandidate(width: 1280, height: 720, pixelWidth: 2560, pixelHeight: 1440, refreshHz: 60)
         ]
         XCTAssertNil(bestMatchModeIndex(for: target, among: modes))
     }
