@@ -73,18 +73,6 @@ struct DisplayAlignApp: App {
                 Text("Dock Owner: \(manager.dockOwner)")
             }
 
-            Menu("Resolutions: \(manager.hasResolutions ? "captured" : "don't change")") {
-                Button("Capture current resolutions") {
-                    manager.captureResolutions()
-                }
-                .disabled(manager.externalName == nil)
-
-                Button("Clear resolutions (don't change)") {
-                    manager.clearResolutions()
-                }
-                .disabled(!manager.hasResolutions)
-            }
-
             Divider()
 
             Button("Open Config...") {

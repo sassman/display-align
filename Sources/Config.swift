@@ -1,5 +1,26 @@
 import Foundation
 
+/// A display's stable identity: the (vendor, model) pair reported by
+/// CoreGraphics. Two physically identical monitors share one `DisplayID` —
+/// the same keying limitation that runs through stacked/flexible/resolution
+/// storage. `packed` folds the pair into a single 64-bit key for set/dict use.
+struct DisplayID: Equatable, Hashable {
+    let vendor: UInt32
+    let model: UInt32
+    var packed: UInt64 { (UInt64(vendor) << 32) | UInt64(model) }
+}
+
+/// Anything carrying a (vendor, model) pair. Gives a free `displayID` so
+/// identity comparisons collapse to a single `==` instead of the repeated
+/// `vendor == … && model == …` predicate.
+protocol DisplayIdentified {
+    var vendor: UInt32 { get }
+    var model: UInt32 { get }
+}
+extension DisplayIdentified {
+    var displayID: DisplayID { DisplayID(vendor: vendor, model: model) }
+}
+
 struct DisplayEntry: Codable, Equatable {
     let name: String
     let vendor: UInt32
@@ -47,6 +68,12 @@ struct DisplayResolution: Codable, Equatable {
     let refreshHz: Double
 }
 
+// (vendor, model) already stored on each of these — conformance is free and
+// adds no properties or coding keys, so the on-disk JSON is unchanged.
+extension DisplayEntry: DisplayIdentified {}
+extension FlexibleDisplay: DisplayIdentified {}
+extension DisplayResolution: DisplayIdentified {}
+
 /// Collapse resolutions that share a (vendor, model) key to a single entry
 /// (first seen wins). Identical monitors report the same (vendor, model), so
 /// only one stored mode is meaningful and both get driven to it — see
@@ -56,7 +83,7 @@ func dedupedResolutions(_ resolutions: [DisplayResolution]) -> [DisplayResolutio
     var seen = Set<UInt64>()
     var result: [DisplayResolution] = []
     for r in resolutions {
-        let key = (UInt64(r.vendor) << 32) | UInt64(r.model)
+        let key = r.displayID.packed
         if seen.insert(key).inserted {
             result.append(r)
         }
@@ -138,7 +165,8 @@ struct Arrangement: Codable, Equatable, Identifiable {
     /// dedupes on this key (see `dedupedResolutions`), so `.first` is
     /// authoritative here.
     func resolution(vendor: UInt32, model: UInt32) -> DisplayResolution? {
-        resolutions?.first { $0.vendor == vendor && $0.model == model }
+        let id = DisplayID(vendor: vendor, model: model)
+        return resolutions?.first { $0.displayID == id }
     }
 }
 
@@ -346,7 +374,11 @@ struct Config: Codable, Equatable {
         do {
             try FileManager.default.createDirectory(at: Self.configDir, withIntermediateDirectories: true)
             let encoder = JSONEncoder()
-            encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+            // No `.sortedKeys`: emit keys in encode order so each object leads
+            // with `name` (Arrangement/DisplayEntry/FlexibleDisplay) — you can
+            // eyeball where one arrangement ends and the next begins. Order is
+            // still deterministic (declaration order), just not alphabetical.
+            encoder.outputFormatting = [.prettyPrinted]
             let data = try encoder.encode(self)
             try data.write(to: Self.configFile, options: .atomic)
         } catch {
@@ -357,15 +389,18 @@ struct Config: Codable, Equatable {
     // MARK: - Membership checks (always against the active arrangement)
 
     func isStacked(vendor: UInt32, model: UInt32) -> Bool {
-        current.stacked.contains { $0.vendor == vendor && $0.model == model }
+        let id = DisplayID(vendor: vendor, model: model)
+        return current.stacked.contains { $0.displayID == id }
     }
 
     func isIgnored(vendor: UInt32, model: UInt32) -> Bool {
-        ignored.contains { $0.vendor == vendor && $0.model == model }
+        let id = DisplayID(vendor: vendor, model: model)
+        return ignored.contains { $0.displayID == id }
     }
 
     func isFlexible(vendor: UInt32, model: UInt32) -> Bool {
-        current.flexible.contains { $0.vendor == vendor && $0.model == model }
+        let id = DisplayID(vendor: vendor, model: model)
+        return current.flexible.contains { $0.displayID == id }
     }
 
     func isKnown(vendor: UInt32, model: UInt32) -> Bool {
@@ -380,9 +415,10 @@ struct Config: Codable, Equatable {
     /// wins. The active arrangement is skipped because the unknown-display
     /// prompt already only fires when the display isn't there.
     func arrangementContaining(vendor: UInt32, model: UInt32) -> String? {
+        let id = DisplayID(vendor: vendor, model: model)
         for arr in arrangements where arr.name != active {
-            if arr.stacked.contains(where: { $0.vendor == vendor && $0.model == model })
-                || arr.flexible.contains(where: { $0.vendor == vendor && $0.model == model })
+            if arr.stacked.contains(where: { $0.displayID == id })
+                || arr.flexible.contains(where: { $0.displayID == id })
             {
                 return arr.name
             }

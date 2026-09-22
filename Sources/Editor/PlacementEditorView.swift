@@ -35,6 +35,14 @@ struct PlacementEditorView: View {
                     .onTapGesture { coordinator.interceptCountdown() }
             }
 
+            // Resolution opt-out (top-left) — shown alongside the Save affordance.
+            if coordinator.canShowSave {
+                rememberResolutionsToggle
+                    .padding(.top, 18)
+                    .padding(.leading, 18)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+            }
+
             // Window controls (top-right, above intercept overlay)
             windowControls
                 .padding(.top, 16)
@@ -145,10 +153,7 @@ struct PlacementEditorView: View {
     private var hintText: String {
         switch coordinator.phase {
         case .idle:
-            if coordinator.canFinalize {
-                return "Ready to save — click ✓ to preview"
-            }
-            return "Unchain a display to rearrange it"
+            return "Click Save to store this arrangement's layout and resolutions"
         case .anchorSelected:
             if coordinator.pendingDisplays.isEmpty {
                 return "Unchain a display to place it here"
@@ -163,19 +168,33 @@ struct PlacementEditorView: View {
 
     // MARK: - Window Controls
 
+    /// Top-left opt-out. On (default) ⇒ Save captures each display's current
+    /// mode; off ⇒ Save clears stored resolutions so the arrangement leaves
+    /// modes untouched on activate.
+    @ViewBuilder
+    private var rememberResolutionsToggle: some View {
+        Toggle(isOn: $coordinator.rememberResolutions) {
+            Text("Remember resolutions")
+                .font(.system(size: 11, weight: .medium))
+                .foregroundColor(.white.opacity(0.5))
+        }
+        .toggleStyle(.switch)
+        .controlSize(.mini)
+        .tint(.green)
+        .fixedSize()
+    }
+
     @ViewBuilder
     private var windowControls: some View {
         HStack(spacing: 8) {
-            // Green check — context-dependent action
+            // Primary action — context-dependent.
             if case .placed = coordinator.phase {
                 greenCheckButton(action: { coordinator.confirmPlacement() })
             } else if case .previewing = coordinator.phase {
                 greenCheckButton(action: { coordinator.acceptPreview() })
-            } else if coordinator.canFinalize {
-                greenCheckButton(action: {
-                    coordinator.finishFinetuning()
-                    coordinator.finalizeArrangement()
-                })
+            } else if coordinator.canShowSave {
+                // Idle / fine-tuning: explicit, always-enabled Save.
+                saveButton
             }
 
             // Close button — always visible
@@ -196,6 +215,27 @@ struct PlacementEditorView: View {
             }
             .buttonStyle(.plain)
         }
+    }
+
+    /// Explicit, labeled Save — stores the arrangement's layout + resolutions
+    /// into the active profile. Enabled whenever shown (Save-anytime).
+    @ViewBuilder
+    private var saveButton: some View {
+        Button(action: { coordinator.saveToActiveProfile() }) {
+            HStack(spacing: 5) {
+                Image(systemName: "checkmark")
+                    .font(.system(size: 11, weight: .semibold))
+                Text("Save")
+                    .font(.system(size: 12, weight: .semibold))
+            }
+            .foregroundColor(.green.opacity(0.9))
+            .padding(.horizontal, 12)
+            .frame(height: 28)
+            .background(Color.green.opacity(0.2))
+            .clipShape(Capsule())
+        }
+        .buttonStyle(.plain)
+        .transition(.scale.combined(with: .opacity))
     }
 
     @ViewBuilder

@@ -9,6 +9,7 @@ DisplayAlign fixes that. A native macOS menubar app (pure CoreGraphics, no depen
 - **Pixel-precise positioning** — visual editor or config file, down to the exact pixel
 - **Named arrangements** (office / home / travel) — switch in one click from the menubar
 - **Dock Owner per arrangement** — pick which display hosts the macOS Dock (and menu bar, depending on macOS settings); defaults to the built-in screen
+- **Per-arrangement resolutions** — captures each display's mode and restores it on switch; leaves resolution untouched when a profile hasn't captured one
 - **Auto-applies on connect** — displays land where they belong without opening System Settings
 - **Visual editor** for placing and fine-tuning displays relative to each other
 - **Config file** for full programmatic control when you prefer it
@@ -42,6 +43,8 @@ When a new display connects that isn't in any arrangement, the app opens a visua
 4. **Preview & confirm** — the arrangement applies live with a countdown; tap anywhere to revert
 
 Tap any placed display to adjust it again. Unchain (unlink) a display to reposition it from scratch.
+
+A green **Save** button sits in the top-right corner (next to the close X) during the idle and fine-tuning phases. Clicking it stores the current arrangement's layout, Dock Owner, and resolutions into the active profile. It works even with no edits — it re-captures the current alignment and resolutions. If you moved any display, Save runs the live preview/countdown first and commits when it finishes; with no position changes it commits immediately and closes the editor. Saving snapshots each display's current resolution, so switching back to the profile later restores those modes (see [Resolutions](#resolutions)).
 
 <p align="center">
   <img src="assets/editor-placing.png" alt="Editor showing placing buttons to put a new display to an edge" width="660">
@@ -88,6 +91,7 @@ On first run, the config is seeded with a `default` arrangement and one stacked 
 | `arrangements[].stacked` | per-arrangement | Displays centered above the built-in screen. |
 | `arrangements[].flexible` | per-arrangement | Displays positioned relative to another (see below). |
 | `arrangements[].dock_owner` | per-arrangement | Optional. Name of the display that should host the Dock and menu bar for this arrangement. Absent or `"builtin"` ⇒ the built-in screen owns the Dock (default). If the named display isn't connected at align-time, the Dock silently falls back to the built-in screen. |
+| `arrangements[].resolutions` | per-arrangement | Optional. Captured per-display modes, keyed by `vendor` + `model` (covers the built-in screen and externals alike). Absent — or no entry for a given display — ⇒ leave that display's resolution alone (non-destructive). |
 
 ### Arrangements (multiple desks / setups)
 
@@ -108,6 +112,9 @@ Each arrangement is an independent layout. Switch from the menubar in one click.
     {
       "name": "office",
       "dock_owner": "ASUS ROG PG348Q",
+      "resolutions": [
+        { "vendor": 1129, "model": 13363, "width": 3440, "height": 1440, "pixelWidth": 3440, "pixelHeight": 1440, "refreshHz": 99.98 }
+      ],
       "stacked": [
         { "name": "ASUS ROG PG348Q", "vendor": 1129, "model": 13363 }
       ],
@@ -149,6 +156,37 @@ Each arrangement can designate one of its displays as the **Dock Owner** — the
 **Menubar UX.** When the active arrangement has at least one external display, a **Dock Owner: \<name\> ▸** submenu appears in the menubar dropdown next to **Active Arrangement**. The submenu lists `builtin` plus every display in the active arrangement; pick one and DisplayAlign re-aligns immediately. Visual editor: each display block has a small radio button in the top-right corner, with the active Dock Owner displayed in orchid purple.
 
 **Fallback.** If the configured Dock Owner is not connected at align-time, the Dock silently stays on the built-in screen and the rest of the arrangement still aligns. When the named display reconnects, the next align brings the Dock with it. The menu still shows the configured name (with no checkmark in the submenu) until you reconnect or pick another.
+
+### Resolutions
+
+Each arrangement can store the display mode of each of its displays and restore them on activate. Default is to leave every display's resolution alone, matching the legacy behavior.
+
+```json
+{
+  "name": "office",
+  "resolutions": [
+    { "vendor": 1129, "model": 13363, "width": 3440, "height": 1440, "pixelWidth": 3440, "pixelHeight": 1440, "refreshHz": 99.98 }
+  ],
+  "stacked": [...],
+  "flexible": [...]
+}
+```
+
+| Field | Type | Meaning |
+|-------|------|---------|
+| `vendor` | UInt32 | Vendor id — half of the `(vendor, model)` key that identifies the display (built-in or external). |
+| `model` | UInt32 | Model id — the other half of the key. |
+| `width` | Int | Scaled ("looks like") point width. |
+| `height` | Int | Scaled ("looks like") point height. |
+| `pixelWidth` | Int | Native pixel width. |
+| `pixelHeight` | Int | Native pixel height. |
+| `refreshHz` | Double | Refresh rate in Hz. |
+
+**How it works.** Resolutions are captured when you click **Save** in the configure/placement editor — there is no separate menubar capture action. Each mode is keyed by `(vendor, model)` — so the built-in screen and externals are covered uniformly. On activate (profile switch), `align()` applies the mode changes, recomputes the layout from the new point sizes, then places the origins — so cross-resolution switches stay aligned in a single pass.
+
+**Opting out.** The editor's top-left **Remember resolutions** toggle (on by default) controls capture: with it on, **Save** snapshots each display's current mode; turn it off and **Save** clears the arrangement's stored resolutions, so activating it leaves every display's mode untouched.
+
+**Non-destructive fallback.** An arrangement — or an individual display within it — with no stored resolution leaves that display's mode untouched. A stored mode with no available match within 15% is skipped, not forced.
 
 ### Stacked (simple)
 

@@ -132,9 +132,6 @@ final class DisplayManager: ObservableObject {
     @Published private(set) var dockOwner: String = "builtin"
     /// "builtin" + all displays in the active arrangement, in stacked-then-flexible order.
     @Published private(set) var dockOwnerCandidates: [String] = ["builtin"]
-    /// Whether the active arrangement has any captured per-display resolutions.
-    /// Drives the menu affordance; `false` ⇒ "don't change resolutions".
-    @Published private(set) var hasResolutions: Bool = false
 
     private var config: Config
     private var pendingPrompt = false
@@ -159,7 +156,6 @@ final class DisplayManager: ObservableObject {
             ["builtin"]
             + config.current.stacked.map(\.name)
             + config.current.flexible.map(\.name)
-        hasResolutions = !(config.current.resolutions?.isEmpty ?? true)
     }
 
     /// Switch the active arrangement and re-evaluate connected displays.
@@ -188,36 +184,6 @@ final class DisplayManager: ObservableObject {
         publishArrangementState()
         refresh()
         if autoAlign { align() }
-    }
-
-    // MARK: - Resolutions
-
-    /// Capture the current display mode of every active display into the
-    /// active arrangement's `resolutions`, keyed by (vendor, model). Covers
-    /// the built-in and all externals; identical monitors are deduped to one
-    /// entry. Persists and republishes state but deliberately does NOT
-    /// re-align: the captured modes equal the current ones, so re-aligning
-    /// would only trigger a `.permanently` reconfiguration (screen flash) and
-    /// could re-fire the unknown-display prompt for no benefit. Mirrors how
-    /// `clearResolutions()` avoids re-aligning.
-    func captureResolutions() {
-        guard let idx = config.arrangements.firstIndex(where: { $0.name == config.active })
-        else { return }
-        let captured = dedupedResolutions(activeDisplays().compactMap { currentResolution(for: $0) })
-        config.arrangements[idx].resolutions = captured.isEmpty ? nil : captured
-        config.save()
-        publishArrangementState()
-    }
-
-    /// Clear all captured resolutions for the active arrangement so activating
-    /// it no longer changes any display's resolution (nil ⇒ leave alone).
-    func clearResolutions() {
-        guard let idx = config.arrangements.firstIndex(where: { $0.name == config.active })
-        else { return }
-        guard config.arrangements[idx].resolutions != nil else { return }
-        config.arrangements[idx].resolutions = nil
-        config.save()
-        publishArrangementState()
     }
 
     // MARK: - Display Mode Access
@@ -282,17 +248,16 @@ final class DisplayManager: ObservableObject {
     // MARK: - Display Identification
 
     func identifyDisplay(_ displayID: CGDirectDisplayID) -> String {
-        let vendor = CGDisplayVendorNumber(displayID)
-        let model = CGDisplayModelNumber(displayID)
+        let id = DisplayID(vendor: CGDisplayVendorNumber(displayID), model: CGDisplayModelNumber(displayID))
 
         // Check all config lists
-        if let entry = config.current.stacked.first(where: { $0.vendor == vendor && $0.model == model }) {
+        if let entry = config.current.stacked.first(where: { $0.displayID == id }) {
             return entry.name
         }
-        if let entry = config.ignored.first(where: { $0.vendor == vendor && $0.model == model }) {
+        if let entry = config.ignored.first(where: { $0.displayID == id }) {
             return entry.name
         }
-        if let entry = config.current.flexible.first(where: { $0.vendor == vendor && $0.model == model }) {
+        if let entry = config.current.flexible.first(where: { $0.displayID == id }) {
             return entry.name
         }
 
@@ -403,8 +368,8 @@ final class DisplayManager: ObservableObject {
             guard
                 let id = displays.first(where: {
                     CGDisplayIsBuiltin($0) == 0
-                        && CGDisplayVendorNumber($0) == entry.vendor
-                        && CGDisplayModelNumber($0) == entry.model
+                        && DisplayID(vendor: CGDisplayVendorNumber($0), model: CGDisplayModelNumber($0))
+                            == entry.displayID
                 })
             else { continue }
 
@@ -421,8 +386,8 @@ final class DisplayManager: ObservableObject {
         var pending = config.current.flexible.filter { flex in
             displays.contains(where: {
                 CGDisplayIsBuiltin($0) == 0
-                    && CGDisplayVendorNumber($0) == flex.vendor
-                    && CGDisplayModelNumber($0) == flex.model
+                    && DisplayID(vendor: CGDisplayVendorNumber($0), model: CGDisplayModelNumber($0))
+                        == flex.displayID
             })
         }
 
@@ -442,8 +407,8 @@ final class DisplayManager: ObservableObject {
                 guard
                     let id = displays.first(where: {
                         CGDisplayIsBuiltin($0) == 0
-                            && CGDisplayVendorNumber($0) == flex.vendor
-                            && CGDisplayModelNumber($0) == flex.model
+                            && DisplayID(vendor: CGDisplayVendorNumber($0), model: CGDisplayModelNumber($0))
+                                == flex.displayID
                     })
                 else { continue }
 
@@ -750,8 +715,7 @@ final class DisplayManager: ObservableObject {
         // Get new display's dimensions
         let newDisplayID = displays.first {
             CGDisplayIsBuiltin($0) == 0
-                && CGDisplayVendorNumber($0) == entry.vendor
-                && CGDisplayModelNumber($0) == entry.model
+                && DisplayID(vendor: CGDisplayVendorNumber($0), model: CGDisplayModelNumber($0)) == entry.displayID
         }
         let width = newDisplayID.map { Int(CGDisplayPixelsWide($0)) } ?? 1920
         let height = newDisplayID.map { Int(CGDisplayPixelsHigh($0)) } ?? 1080
