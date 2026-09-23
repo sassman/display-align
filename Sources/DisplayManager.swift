@@ -742,12 +742,14 @@ final class DisplayManager: ObservableObject {
                 height: height,
                 dockOwner: config.current.effectiveDockOwner
             )
-            coordinator.onCommit = { [weak self] in
-                self?.config = Config.load()
-                self?.publishArrangementState()
-                self?.refresh()
-                if self?.autoAlign == true {
-                    self?.align()
+            // Strong self: DisplayManager is app-lifetime (the menubar owns it),
+            // and the callback dies with the coordinator when its window closes.
+            coordinator.onCommit = {
+                self.config = Config.load()
+                self.publishArrangementState()
+                self.refresh()
+                if self.autoAlign {
+                    self.align()
                 }
             }
             PlacementWindow.show(coordinator: coordinator, on: builtinID)
@@ -778,12 +780,13 @@ final class DisplayManager: ObservableObject {
                 arrangement: canvasDisplays,
                 dockOwner: config.current.effectiveDockOwner
             )
-            coordinator.onCommit = { [weak self] in
-                self?.config = Config.load()
-                self?.publishArrangementState()
-                self?.refresh()
-                if self?.autoAlign == true {
-                    self?.align()
+            // Strong self: see note in openPlacementEditor above.
+            coordinator.onCommit = {
+                self.config = Config.load()
+                self.publishArrangementState()
+                self.refresh()
+                if self.autoAlign {
+                    self.align()
                 }
             }
             PlacementWindow.show(coordinator: coordinator, on: builtinID)
