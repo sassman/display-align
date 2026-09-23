@@ -30,6 +30,8 @@ struct PendingDisplay: Identifiable, Equatable {
     let height: Int
 }
 
+extension PendingDisplay: DisplayIdentified {}
+
 // MARK: - PlacementConfig
 
 /// Working placement state describing how a new display is positioned relative to an anchor.
@@ -68,6 +70,10 @@ final class PlacementCoordinator: ObservableObject {
     /// Working dock owner. "builtin" or a `CanvasDisplay.id`. Persisted via
     /// `commitAllConfigs()`.
     @Published var workingDockOwner: String = "builtin"
+    /// Whether Save should capture this arrangement's per-display resolutions.
+    /// On (default) ⇒ snapshot current modes so activating restores them; off ⇒
+    /// Save clears any stored resolutions so the arrangement leaves modes alone.
+    @Published var rememberResolutions: Bool = true
 
     /// Configs with unsaved changes, keyed by canvas display ID. This is the single source
     /// of truth for what gets written on save.
@@ -82,7 +88,7 @@ final class PlacementCoordinator: ObservableObject {
     private var countdownCancellable: AnyCancellable?
     /// Displays that were unchained during this session (vendor, model pairs to remove from config on save).
     private var removedDisplays: [(vendor: UInt32, model: UInt32)] = []
-    /// Initial dock owner captured at session start; used by `canFinalize`.
+    /// Initial dock owner captured at session start; compared on save to detect a dock-owner change.
     private let initialDockOwner: String
 
     // MARK: Init
@@ -128,11 +134,17 @@ final class PlacementCoordinator: ObservableObject {
 
     // MARK: - Computed Properties
 
-    /// Whether unsaved changes exist and can be saved.
-    var canFinalize: Bool {
-        !committedConfigs.isEmpty
-            || !removedDisplays.isEmpty
-            || workingDockOwner != initialDockOwner
+    /// Whether the explicit Save button is shown/enabled. Save works anytime
+    /// the editor is idle or fine-tuning — but NOT while placing a display
+    /// (`.placed`/`.anchorSelected`/`.pickingDisplay`) or during the preview
+    /// countdown (`.previewing`), which have their own contextual actions.
+    var canShowSave: Bool {
+        switch phase {
+        case .idle, .finetuning:
+            return true
+        default:
+            return false
+        }
     }
 
     /// The currently active pending display (the one being placed).
@@ -525,7 +537,7 @@ final class PlacementCoordinator: ObservableObject {
         arrangement.append(canvasDisplay)
         committedConfigs[canvasId] = config
         // If this display was previously unchained, it's no longer a removal
-        removedDisplays.removeAll { $0.vendor == pending.vendor && $0.model == pending.model }
+        removedDisplays.removeAll { DisplayID(vendor: $0.vendor, model: $0.model) == pending.displayID }
 
         if pendingDisplays.isEmpty {
             phase = .idle
@@ -553,17 +565,32 @@ final class PlacementCoordinator: ObservableObject {
         commitAllConfigs()
     }
 
-    /// Trigger preview + countdown for all changed displays.
-    func finalizeArrangement() {
-        guard canFinalize else { return }
+    /// Explicit "Save" action for the editor's Save button. Not gated by any
+    /// change check: clicking Save re-captures the current alignment +
+    /// resolutions into the active profile even when nothing changed in the
+    /// editor.
+    ///
+    /// Folds any in-progress fine-tune (no-op unless the phase is
+    /// `.finetuning`), then:
+    ///   - position changes present (`committedConfigs` non-empty) → run the
+    ///     20-second physical preview + auto-revert countdown before
+    ///     committing.
+    ///   - no position changes → commit immediately via `commitAllConfigs()`,
+    ///     which still applies any queued display removals and the dock-owner
+    ///     change, captures resolutions, keeps the existing layout, and
+    ///     dismisses.
+    func saveToActiveProfile() {
+        finishFinetuning()
 
-        // If only removals (no position changes), commit directly without preview
         if committedConfigs.isEmpty {
             commitAllConfigs()
             return
         }
 
-        guard let firstConfig = committedConfigs.values.first else { return }
+        guard let firstConfig = committedConfigs.values.first else {
+            commitAllConfigs()
+            return
+        }
         applyPhysicalPreview()
         phase = .previewing(firstConfig, secondsLeft: 20)
         startCountdown()
@@ -954,9 +981,9 @@ final class PlacementCoordinator: ObservableObject {
             let entry = DisplayEntry(name: display.name, vendor: vendor, model: model)
 
             // Remove from all lists first
-            cfg.arrangements[arrIdx].stacked.removeAll { $0.vendor == entry.vendor && $0.model == entry.model }
-            cfg.arrangements[arrIdx].flexible.removeAll { $0.vendor == entry.vendor && $0.model == entry.model }
-            cfg.ignored.removeAll { $0.vendor == entry.vendor && $0.model == entry.model }
+            cfg.arrangements[arrIdx].stacked.removeAll { $0.displayID == entry.displayID }
+            cfg.arrangements[arrIdx].flexible.removeAll { $0.displayID == entry.displayID }
+            cfg.ignored.removeAll { $0.displayID == entry.displayID }
 
             // Displace any display that occupies the same slot
             cfg.arrangements[arrIdx].flexible.removeAll { flex in
@@ -992,13 +1019,24 @@ final class PlacementCoordinator: ObservableObject {
 
         // Remove unchained displays from config
         for removed in removedDisplays {
-            cfg.arrangements[arrIdx].stacked.removeAll { $0.vendor == removed.vendor && $0.model == removed.model }
-            cfg.arrangements[arrIdx].flexible.removeAll { $0.vendor == removed.vendor && $0.model == removed.model }
+            let id = DisplayID(vendor: removed.vendor, model: removed.model)
+            cfg.arrangements[arrIdx].stacked.removeAll { $0.displayID == id }
+            cfg.arrangements[arrIdx].flexible.removeAll { $0.displayID == id }
         }
 
         // Persist working dock owner. Normalize: "builtin" stores as nil.
         cfg.arrangements[arrIdx].dock_owner =
             workingDockOwner == "builtin" ? nil : workingDockOwner
+
+        // Snapshot the live resolution of every active display so activating
+        // this arrangement restores them. Absent ⇒ leave alone (see model).
+        // When the user opts out via the editor toggle, clear stored modes.
+        if rememberResolutions {
+            let captured = captureCurrentResolutions()
+            cfg.arrangements[arrIdx].resolutions = captured.isEmpty ? nil : captured
+        } else {
+            cfg.arrangements[arrIdx].resolutions = nil
+        }
 
         cfg.save()
         phase = .idle
@@ -1023,6 +1061,15 @@ final class PlacementCoordinator: ObservableObject {
             }
         }
         return nil
+    }
+
+    /// Snapshot the current display mode of every active display (built-in
+    /// included) into `DisplayResolution` values keyed by (vendor, model).
+    /// Reuses the file-scope `activeDisplays()` + `currentResolution(for:)`
+    /// helpers (defined in DisplayManager.swift) so the snapshot definition is
+    /// single-sourced, then dedupes identical monitors on (vendor, model).
+    private func captureCurrentResolutions() -> [DisplayResolution] {
+        dedupedResolutions(activeDisplays().compactMap { currentResolution(for: $0) })
     }
 
 }
