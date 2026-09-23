@@ -153,7 +153,9 @@ struct PlacementEditorView: View {
     private var hintText: String {
         switch coordinator.phase {
         case .idle:
-            return "Click Save to store this arrangement's layout and resolutions"
+            return coordinator.rememberResolutions
+                ? "Click Save to store this arrangement's layout and resolutions"
+                : "Click Save to store this arrangement's layout and clear saved resolutions"
         case .anchorSelected:
             if coordinator.pendingDisplays.isEmpty {
                 return "Unchain a display to place it here"

@@ -455,10 +455,15 @@ struct Config: Codable, Equatable {
 
         let cloneName = uniqueArrangementName(basedOn: cur.name)
         arrangements.append(
+            // Carry over EVERYTHING from the source arrangement — dock_owner
+            // and resolutions default to nil in the initializer, so omitting
+            // them silently strips them off the clone.
             Arrangement(
                 name: cloneName,
                 stacked: cur.stacked + [entry],
-                flexible: cur.flexible
+                flexible: cur.flexible,
+                dock_owner: cur.dock_owner,
+                resolutions: cur.resolutions
             ))
         active = cloneName
         save()

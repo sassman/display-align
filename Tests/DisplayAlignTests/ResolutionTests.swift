@@ -101,6 +101,22 @@ final class BestMatchModeTests: XCTestCase {
         XCTAssertEqual(bestMatchModeIndex(for: target, among: modes), 1)
     }
 
+    /// Among multiple same-pixel-and-point candidates whose refresh rates all
+    /// differ from the target, pick the one closest to the target's refresh.
+    /// Prevents mode enumeration order from silently choosing 30 Hz when a
+    /// 120 Hz variant is closer to a stored 144 Hz.
+    func testEqualSizePicksNearestRefresh() {
+        let stored = DisplayResolution(
+            vendor: 1, model: 1, width: 2560, height: 1440,
+            pixelWidth: 5120, pixelHeight: 2880, refreshHz: 144)
+        let modes = [
+            DisplayModeCandidate(width: 2560, height: 1440, pixelWidth: 5120, pixelHeight: 2880, refreshHz: 30),
+            DisplayModeCandidate(width: 2560, height: 1440, pixelWidth: 5120, pixelHeight: 2880, refreshHz: 60),
+            DisplayModeCandidate(width: 2560, height: 1440, pixelWidth: 5120, pixelHeight: 2880, refreshHz: 120),
+        ]
+        XCTAssertEqual(bestMatchModeIndex(for: stored, among: modes), 2)
+    }
+
     func testNearestFallback() {
         // Nothing matches pixel+point exactly; nearest by pixel distance wins.
         let modes = [

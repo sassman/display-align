@@ -49,12 +49,18 @@ func bestMatchModeIndex(for target: DisplayResolution, among modes: [DisplayMode
         return i
     }
 
-    // 2. Same pixel + point size, ignoring refresh.
-    if let i = modes.firstIndex(where: {
-        $0.pixelWidth == target.pixelWidth && $0.pixelHeight == target.pixelHeight
-            && $0.width == target.width && $0.height == target.height
+    // 2. Same pixel + point size, ignoring refresh — but among such
+    //    equal-size candidates prefer the one nearest the target's refresh
+    //    (mode enumeration order is otherwise arbitrary, so returning the
+    //    first can pick 30 Hz when a 120 Hz variant is closer to 144 Hz).
+    let equalSize = modes.enumerated().filter {
+        $0.element.pixelWidth == target.pixelWidth && $0.element.pixelHeight == target.pixelHeight
+            && $0.element.width == target.width && $0.element.height == target.height
+    }
+    if let best = equalSize.min(by: {
+        abs($0.element.refreshHz - target.refreshHz) < abs($1.element.refreshHz - target.refreshHz)
     }) {
-        return i
+        return best.offset
     }
 
     // 3. Nearest by lexicographic (pixel, point, refresh) distance.
@@ -516,18 +522,13 @@ final class DisplayManager: ObservableObject {
             return
         }
 
-        // Bail only if there are no externals at all (no point aligning a solo
-        // builtin). Translation shifts positions but never changes which
-        // displays are built-in, so this check is valid pre-translation.
-        let hasExternal = resolved.contains { CGDisplayIsBuiltin($0.displayID) == 0 }
-        guard hasExternal else {
-            statusMessage = "No displays to move"
-            return
-        }
-
         // Determine which displays need a stored-resolution (mode) change.
         // Displays with no stored resolution, no acceptable match, or whose
         // stored mode is already current are left untouched (non-destructive).
+        //
+        // Runs BEFORE the external-display guard so a built-in-only session
+        // still restores the built-in's captured mode (the guard only gates
+        // origin placement — modes need restoring regardless).
         var modeChanges: [(id: CGDirectDisplayID, mode: CGDisplayMode)] = []
         for d in resolved {
             let v = CGDisplayVendorNumber(d.displayID)
@@ -570,6 +571,19 @@ final class DisplayManager: ObservableObject {
                 return
             }
             layoutSource = recomputed
+        }
+
+        // Bail only if there are no externals at all (no point placing origins
+        // for a solo builtin). Translation shifts positions but never changes
+        // which displays are built-in, so this check is valid pre-translation.
+        // Only gates the origin transaction — mode restoration above already ran.
+        let hasExternal = layoutSource.contains { CGDisplayIsBuiltin($0.displayID) == 0 }
+        guard hasExternal else {
+            statusMessage =
+                modeChanges.isEmpty
+                ? "No displays to move"
+                : "Restored built-in mode; no externals to place"
+            return
         }
 
         // PASS 2 — apply origins in a second, balanced transaction.
